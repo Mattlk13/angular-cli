@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright Google Inc. All Rights Reserved.
+ * Copyright Google LLC All Rights Reserved.
  *
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
@@ -8,11 +8,13 @@
 
 import { LogLevel, Logger, process as mainNgcc } from '@angular/compiler-cli/ngcc';
 import { spawnSync } from 'child_process';
-import { accessSync, constants, existsSync } from 'fs';
+import { createHash } from 'crypto';
+import { Resolver } from 'enhanced-resolve';
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import * as path from 'path';
 import * as ts from 'typescript';
-import { InputFileSystem } from 'webpack';
 import { time, timeEnd } from './benchmark';
+import { InputFileSystem } from './ivy/system';
 
 // We cannot create a plugin for this, because NGTSC requires addition type
 // information which ngcc creates when processing a package which was compiled with NGC.
@@ -31,11 +33,12 @@ export class NgccProcessor {
 
   constructor(
     private readonly propertiesToConsider: string[],
-    private readonly inputFileSystem: InputFileSystem,
     private readonly compilationWarnings: (Error | string)[],
     private readonly compilationErrors: (Error | string)[],
     private readonly basePath: string,
     private readonly tsConfigPath: string,
+    private readonly inputFileSystem: InputFileSystem,
+    private readonly resolver: Resolver,
   ) {
     this._logger = new NgccLogger(this.compilationWarnings, this.compilationErrors);
     this._nodeModulesDirectory = this.findNodeModulesDirectory(this.basePath);
@@ -54,6 +57,58 @@ export class NgccProcessor {
       return;
     }
 
+    // Perform a ngcc run check to determine if an initial execution is required.
+    // If a run hash file exists that matches the current package manager lock file and the
+    // project's tsconfig, then an initial ngcc run has already been performed.
+    let skipProcessing = false;
+    let runHashFilePath: string | undefined;
+    const runHashBasePath = path.join(this._nodeModulesDirectory, '.cli-ngcc');
+    const projectBasePath = path.join(this._nodeModulesDirectory, '..');
+    try {
+      let lockData;
+      let lockFile = 'yarn.lock';
+      try {
+        lockData = readFileSync(path.join(projectBasePath, lockFile));
+      } catch {
+        lockFile = 'package-lock.json';
+        lockData = readFileSync(path.join(projectBasePath, lockFile));
+      }
+
+      let ngccConfigData;
+      try {
+        ngccConfigData = readFileSync(path.join(projectBasePath, 'ngcc.config.js'));
+      } catch {
+        ngccConfigData = '';
+      }
+
+      const relativeTsconfigPath = path.relative(projectBasePath, this.tsConfigPath);
+      const tsconfigData = readFileSync(this.tsConfigPath);
+
+      // Generate a hash that represents the state of the package lock file and used tsconfig
+      const runHash = createHash('sha256')
+        .update(lockData)
+        .update(lockFile)
+        .update(ngccConfigData)
+        .update(tsconfigData)
+        .update(relativeTsconfigPath)
+        .digest('hex');
+
+      // The hash is used directly in the file name to mitigate potential read/write race
+      // conditions as well as to only require a file existence check
+      runHashFilePath = path.join(runHashBasePath, runHash + '.lock');
+
+      // If the run hash lock file exists, then ngcc was already run against this project state
+      if (existsSync(runHashFilePath)) {
+        skipProcessing = true;
+      }
+    } catch {
+      // Any error means an ngcc execution is needed
+    }
+
+    if (skipProcessing) {
+      return;
+    }
+
     const timeLabel = 'NgccProcessor.process';
     time(timeLabel);
 
@@ -66,15 +121,16 @@ export class NgccProcessor {
       process.execPath,
       [
         require.resolve('@angular/compiler-cli/ngcc/main-ngcc.js'),
-        '--source', /** basePath */
+        '--source' /** basePath */,
         this._nodeModulesDirectory,
-        '--properties', /** propertiesToConsider */
+        '--properties' /** propertiesToConsider */,
         ...this.propertiesToConsider,
-        '--first-only', /** compileAllFormats */
-        '--create-ivy-entry-points', /** createNewEntryPointFormats */
+        '--first-only' /** compileAllFormats */,
+        '--create-ivy-entry-points' /** createNewEntryPointFormats */,
         '--async',
-        '--tsconfig', /** tsConfigPath */
+        '--tsconfig' /** tsConfigPath */,
         this.tsConfigPath,
+        '--use-program-dependencies',
       ],
       {
         stdio: ['inherit', process.stderr, process.stderr],
@@ -87,6 +143,18 @@ export class NgccProcessor {
     }
 
     timeEnd(timeLabel);
+
+    // ngcc was successful so if a run hash was generated, write it for next time
+    if (runHashFilePath) {
+      try {
+        if (!existsSync(runHashBasePath)) {
+          mkdirSync(runHashBasePath, { recursive: true });
+        }
+        writeFileSync(runHashFilePath, '');
+      } catch {
+        // Errors are non-fatal
+      }
+    }
   }
 
   /** Process a module and it's depedencies. */
@@ -95,8 +163,11 @@ export class NgccProcessor {
     resolvedModule: ts.ResolvedModule | ts.ResolvedTypeReferenceDirective,
   ): void {
     const resolvedFileName = resolvedModule.resolvedFileName;
-    if (!resolvedFileName || moduleName.startsWith('.')
-      || this._processedModules.has(resolvedFileName)) {
+    if (
+      !resolvedFileName ||
+      moduleName.startsWith('.') ||
+      this._processedModules.has(resolvedFileName)
+    ) {
       // Skip when module is unknown, relative or NGCC compiler is not found or already processed.
       return;
     }
@@ -126,9 +197,7 @@ export class NgccProcessor {
 
     // Purge this file from cache, since NGCC add new mainFields. Ex: module_ivy_ngcc
     // which are unknown in the cached file.
-
-    // tslint:disable-next-line:no-any
-    (this.inputFileSystem as any).purge(packageJsonPath);
+    this.inputFileSystem.purge?.(packageJsonPath);
 
     this._processedModules.add(resolvedFileName);
   }
@@ -142,14 +211,14 @@ export class NgccProcessor {
    */
   private tryResolvePackage(moduleName: string, resolvedFileName: string): string | undefined {
     try {
-      // This is based on the logic in the NGCC compiler
-      // tslint:disable-next-line:max-line-length
-      // See: https://github.com/angular/angular/blob/b93c1dffa17e4e6900b3ab1b9e554b6da92be0de/packages/compiler-cli/src/ngcc/src/packages/dependency_host.ts#L85-L121
-      return require.resolve(`${moduleName}/package.json`, {
-        paths: [resolvedFileName],
-      });
+      const resolvedPath = this.resolver.resolveSync(
+        {},
+        resolvedFileName,
+        `${moduleName}/package.json`,
+      );
+
+      return resolvedPath || undefined;
     } catch {
-      // if it fails this might be a deep import which doesn't have a package.json
       // Ex: @angular/compiler/src/i18n/i18n_ast/package.json
       // or local libraries which don't reside in node_modules
       const packageJsonPath = path.resolve(resolvedFileName, '../package.json');
@@ -179,9 +248,10 @@ class NgccLogger implements Logger {
   constructor(
     private readonly compilationWarnings: (Error | string)[],
     private readonly compilationErrors: (Error | string)[],
-  ) { }
+  ) {}
 
-  debug(..._args: string[]) { }
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
+  debug() {}
 
   info(...args: string[]) {
     // Log to stderr because it's a progress-like info message.

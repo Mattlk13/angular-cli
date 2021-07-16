@@ -1,23 +1,20 @@
 /**
  * @license
- * Copyright Google Inc. All Rights Reserved.
+ * Copyright Google LLC All Rights Reserved.
  *
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
-import { JsonAstObject, JsonValue } from '@angular-devkit/core';
+
+import { JsonValue } from '@angular-devkit/core';
 import { Rule } from '@angular-devkit/schematics';
 import { addPackageJsonDependency, getPackageJsonDependency } from '../../utility/dependencies';
-import { findPropertyInAstObject, insertPropertyInAstObjectInOrder, removePropertyInAstObject } from '../../utility/json-utils';
-import { readJsonFileAsAstObject } from '../update-9/utils';
+import { JSONFile } from '../../utility/json-file';
 
 export const TSLINT_VERSION = '~6.1.0';
 const TSLINT_CONFIG_PATH = '/tslint.json';
 
-const RULES_TO_DELETE: string[] = [
-  'no-use-before-declare',
-  'no-unused-variable',
-];
+const RULES_TO_DELETE: string[] = ['no-use-before-declare', 'no-unused-variable'];
 
 const RULES_TO_ADD: Record<string, JsonValue> = {
   align: {
@@ -96,9 +93,11 @@ export default function (): Rule {
     }
 
     // Update tslint config.
-    const tslintJsonAst = readJsonFileAsAstObject(tree, TSLINT_CONFIG_PATH);
-    if (!tslintJsonAst) {
-      const config = ['tslint.js', 'tslint.yaml'].find(c => tree.exists(c));
+    let json;
+    try {
+      json = new JSONFile(tree, TSLINT_CONFIG_PATH);
+    } catch {
+      const config = ['tslint.js', 'tslint.yaml'].find((c) => tree.exists(c));
       if (config) {
         logger.warn(`Expected a JSON configuration file but found "${config}".`);
       } else {
@@ -110,47 +109,29 @@ export default function (): Rule {
 
     // Remove old/deprecated rules.
     for (const rule of RULES_TO_DELETE) {
-      const tslintJsonAst = readJsonFileAsAstObject(tree, TSLINT_CONFIG_PATH) as JsonAstObject;
-      const rulesAst = findPropertyInAstObject(tslintJsonAst, 'rules');
-      if (rulesAst?.kind !== 'object') {
-        break;
-      }
-
-      const recorder = tree.beginUpdate(TSLINT_CONFIG_PATH);
-      removePropertyInAstObject(recorder, rulesAst, rule);
-      tree.commitUpdate(recorder);
+      json.remove(['rules', rule]);
     }
 
     // Add new rules only iif the configuration extends 'tslint:recommended'.
     // This is because some rules conflict with prettier or other tools.
-    const extendsAst = findPropertyInAstObject(tslintJsonAst, 'extends');
+    const extend = json.get(['extends']);
     if (
-      !extendsAst ||
-      (extendsAst.kind === 'string' && extendsAst.value !== 'tslint:recommended') ||
-      (extendsAst.kind === 'array' && extendsAst.elements.some(e => e.value !== 'tslint:recommended'))
+      extend !== 'tslint:recommended' ||
+      (Array.isArray(extend) && extend.some((e) => e.value !== 'tslint:recommended'))
     ) {
-      logger.warn(`tslint configuration does not extend "tslint:recommended" or it extends multiple configurations.`
-        + '\nSkipping rule changes as some rules might conflict.');
+      logger.warn(
+        `tslint configuration does not extend "tslint:recommended" or it extends multiple configurations.` +
+          '\nSkipping rule changes as some rules might conflict.',
+      );
 
       return;
     }
 
     for (const [name, value] of Object.entries(RULES_TO_ADD)) {
-      const tslintJsonAst = readJsonFileAsAstObject(tree, TSLINT_CONFIG_PATH) as JsonAstObject;
-      const rulesAst = findPropertyInAstObject(tslintJsonAst, 'rules');
-      if (rulesAst?.kind !== 'object') {
-        break;
+      const ruleName = ['rules', name];
+      if (json.get(ruleName) === undefined) {
+        json.modify(ruleName, value);
       }
-
-      if (findPropertyInAstObject(rulesAst, name)) {
-        // Skip as rule already exists.
-        continue;
-      }
-
-      const recorder = tree.beginUpdate(TSLINT_CONFIG_PATH);
-      insertPropertyInAstObjectInOrder(recorder, rulesAst, name, value, 4);
-      tree.commitUpdate(recorder);
     }
-
   };
 }

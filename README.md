@@ -49,7 +49,7 @@ To get started locally, follow these instructions:
 
 1. If you haven't done it already, [make a fork of this repo](https://github.com/angular/angular-cli/fork).
 1. Clone to your local computer using `git`.
-1. Make sure that you have Node 10.13 or later installed. See instructions [here](https://nodejs.org/en/download/).
+1. Make sure that you have Node 12.14 or 14.0 installed. See instructions [here](https://nodejs.org/en/download/).
 1. Make sure that you have `yarn` installed; see instructions [here](https://yarnpkg.com/lang/en/docs/install/).
 1. Run `yarn` (no arguments) from the root of your clone of this project to install dependencies.
 
@@ -113,20 +113,21 @@ as expected.
 
 ## Testing
 
-There are three different test suites which can be run locally:
+There are two different test suites which can be run locally:
 
-* Unit tests
-  * Run: `yarn test --full`
-  * Debug: `yarn debug:test --full`
-* Large tests
-  * Run: `yarn test-large --full`
-  * Debug: `yarn debug:test-large --full`
-* End to end tests
+### Unit tests
+  * Run all tests: `yarn bazel test //packages/...`
+  * Run a subset of the tests, use the full Bazel target example: `yarn bazel test //packages/schematics/angular:angular_test`
+  * For a complete list of test targets use the following Bazel query: `yarn bazel query "tests(//packages/...)"`
+
+You can find more info about debugging [tests with Bazel in the docs.](https://github.com/angular/angular-cli/blob/master/docs/process/bazel.md#debugging-jasmine_node_test)  
+
+### End to end tests
   * Run: `node tests/legacy-cli/run_e2e.js`
-  * Run subset of tests: `node tests/legacy-cli/run_e2e.js tests/legacy-cli/e2e/tests/i18n/ivy-localize-*`
+  * Run a subset of the tests: `node tests/legacy-cli/run_e2e.js tests/legacy-cli/e2e/tests/i18n/ivy-localize-*`
 
-When running the debug commands, Node will stop and wait for a debugger to
-attach. You can attach your IDE to the debugger to stop on breakpoints and step through the code. Also see [IDE Specific Usage](#ide-specific-usage) for a
+When running the debug commands, Node will stop and wait for a debugger to attach.
+You can attach your IDE to the debugger to stop on breakpoints and step through the code. Also, see [IDE Specific Usage](#ide-specific-usage) for a
 simpler debug story.
 
 When debugging a specific test, change `describe()` or `it()` to `fdescribe()`
@@ -184,7 +185,6 @@ This is a monorepo which contains many tools and packages:
 |---|---|---|---|
 **Architect** | [`@angular-devkit/architect`](https://npmjs.com/package/@angular-devkit/architect) | [![latest](https://img.shields.io/npm/v/%40angular-devkit%2Farchitect/latest.svg)](https://npmjs.com/package/@angular-devkit/architect) | [![README](https://img.shields.io/badge/README--green.svg)](/packages/angular_devkit/architect/README.md) [![snapshot](https://img.shields.io/badge/snapshot--blue.svg)](https://github.com/angular/angular-devkit-architect-builds)
 **Build Angular** | [`@angular-devkit/build-angular`](https://npmjs.com/package/@angular-devkit/build-angular) | [![latest](https://img.shields.io/npm/v/%40angular-devkit%2Fbuild-angular/latest.svg)](https://npmjs.com/package/@angular-devkit/build-angular) | [![README](https://img.shields.io/badge/README--green.svg)](/packages/angular_devkit/build_angular/README.md) [![snapshot](https://img.shields.io/badge/snapshot--blue.svg)](https://github.com/angular/angular-devkit-build-angular-builds)
-**Build NgPackagr** | [`@angular-devkit/build-ng-packagr`](https://npmjs.com/package/@angular-devkit/build-ng-packagr) | [![latest](https://img.shields.io/npm/v/%40angular-devkit%2Fbuild-ng-packagr/latest.svg)](https://npmjs.com/package/@angular-devkit/build-ng-packagr) | [![README](https://img.shields.io/badge/README--green.svg)](/packages/angular_devkit/build_ng_packagr/README.md) [![snapshot](https://img.shields.io/badge/snapshot--blue.svg)](https://github.com/angular/angular-devkit-build-ng-packagr-builds)
 **Build Optimizer** | [`@angular-devkit/build-optimizer`](https://npmjs.com/package/@angular-devkit/build-optimizer) | [![latest](https://img.shields.io/npm/v/%40angular-devkit%2Fbuild-optimizer/latest.svg)](https://npmjs.com/package/@angular-devkit/build-optimizer) | [![README](https://img.shields.io/badge/README--green.svg)](/packages/angular_devkit/build_optimizer/README.md) [![snapshot](https://img.shields.io/badge/snapshot--blue.svg)](https://github.com/angular/angular-devkit-build-optimizer-builds)
 **Build Webpack** | [`@angular-devkit/build-webpack`](https://npmjs.com/package/@angular-devkit/build-webpack) | [![latest](https://img.shields.io/npm/v/%40angular-devkit%2Fbuild-webpack/latest.svg)](https://npmjs.com/package/@angular-devkit/build-webpack) | [![README](https://img.shields.io/badge/README--green.svg)](/packages/angular_devkit/build_webpack/README.md) [![snapshot](https://img.shields.io/badge/snapshot--blue.svg)](https://github.com/angular/angular-devkit-build-webpack-builds)
 **Core** | [`@angular-devkit/core`](https://npmjs.com/package/@angular-devkit/core) | [![latest](https://img.shields.io/npm/v/%40angular-devkit%2Fcore/latest.svg)](https://npmjs.com/package/@angular-devkit/core) | [![README](https://img.shields.io/badge/README--green.svg)](/packages/angular_devkit/core/README.md) [![snapshot](https://img.shields.io/badge/snapshot--blue.svg)](https://github.com/angular/angular-devkit-core-builds)
@@ -196,8 +196,6 @@ This is a monorepo which contains many tools and packages:
 |---|---|---|---|
 **Angular PWA Schematics** | [`@angular/pwa`](https://npmjs.com/package/@angular/pwa) | [![latest](https://img.shields.io/npm/v/%40angular%2Fpwa/latest.svg)](https://npmjs.com/package/@angular/pwa) |  [![snapshot](https://img.shields.io/badge/snapshot--blue.svg)](https://github.com/angular/angular-pwa-builds)
 **Angular Schematics** | [`@schematics/angular`](https://npmjs.com/package/@schematics/angular) | [![latest](https://img.shields.io/npm/v/%40schematics%2Fangular/latest.svg)](https://npmjs.com/package/@schematics/angular) |  [![snapshot](https://img.shields.io/badge/snapshot--blue.svg)](https://github.com/angular/schematics-angular-builds)
-**Schematics Schematics** | [`@schematics/schematics`](https://npmjs.com/package/@schematics/schematics) | [![latest](https://img.shields.io/npm/v/%40schematics%2Fschematics/latest.svg)](https://npmjs.com/package/@schematics/schematics) |  [![snapshot](https://img.shields.io/badge/snapshot--blue.svg)](https://github.com/angular/schematics-schematics-builds)
-**Package Update Schematics** | [`@schematics/update`](https://npmjs.com/package/@schematics/update) | [![latest](https://img.shields.io/npm/v/%40schematics%2Fupdate/latest.svg)](https://npmjs.com/package/@schematics/update) |  [![snapshot](https://img.shields.io/badge/snapshot--blue.svg)](https://github.com/angular/schematics-update-builds)
 
 #### Misc
 

@@ -1,50 +1,47 @@
 /**
  * @license
- * Copyright Google Inc. All Rights Reserved.
+ * Copyright Google LLC All Rights Reserved.
  *
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
+
 import { Rule } from '@angular-devkit/schematics';
 import { removePackageJsonDependency } from '../../utility/dependencies';
-import { findPropertyInAstObject, removePropertyInAstObject } from '../../utility/json-utils';
+import { JSONFile } from '../../utility/json-file';
+import { allTargetOptions, allWorkspaceTargets, getWorkspace } from '../../utility/workspace';
 import { Builders } from '../../utility/workspace-models';
-import { getAllOptions, getTargets, getWorkspace, readJsonFileAsAstObject } from './utils';
 
 /**
  * Remove tsickle from libraries
  */
 export function removeTsickle(): Rule {
-  return (tree, context) => {
+  return async (tree, { logger }) => {
     removePackageJsonDependency(tree, 'tsickle');
-    const logger = context.logger;
-    const workspace = getWorkspace(tree);
 
-    for (const { target } of getTargets(workspace, 'build', Builders.NgPackagr)) {
-      for (const options of getAllOptions(target)) {
-        const tsConfigOption = findPropertyInAstObject(options, 'tsConfig');
-        if (!tsConfigOption || tsConfigOption.kind !== 'string') {
+    const workspace = await getWorkspace(tree);
+    for (const [targetName, target] of allWorkspaceTargets(workspace)) {
+      if (targetName !== 'build' || target.builder !== Builders.DeprecatedNgPackagr) {
+        continue;
+      }
+
+      for (const [, options] of allTargetOptions(target)) {
+        const tsConfigPath = options.tsConfig;
+        if (!tsConfigPath || typeof tsConfigPath !== 'string') {
           continue;
         }
 
-        const tsConfigPath = tsConfigOption.value;
-        const tsConfigAst = readJsonFileAsAstObject(tree, tsConfigPath);
-        if (!tsConfigAst) {
+        let tsConfigJson;
+        try {
+          tsConfigJson = new JSONFile(tree, tsConfigPath);
+        } catch {
           logger.warn(`Cannot find file: ${tsConfigPath}`);
 
           continue;
         }
 
-        const ngCompilerOptions = findPropertyInAstObject(tsConfigAst, 'angularCompilerOptions');
-        if (ngCompilerOptions && ngCompilerOptions.kind === 'object') {
-          // remove annotateForClosureCompiler option
-          const recorder = tree.beginUpdate(tsConfigPath);
-          removePropertyInAstObject(recorder, ngCompilerOptions, 'annotateForClosureCompiler');
-          tree.commitUpdate(recorder);
-        }
+        tsConfigJson.remove(['angularCompilerOptions', 'annotateForClosureCompiler']);
       }
     }
-
-    return tree;
   };
 }

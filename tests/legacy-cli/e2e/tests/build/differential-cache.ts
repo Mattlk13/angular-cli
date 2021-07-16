@@ -47,20 +47,20 @@ export default async function() {
   // Enable Differential loading to run both size checks
   await replaceInFile(
     '.browserslistrc',
-    'not IE 9-11',
-    'IE 9-11',
+    'not IE 11',
+    'IE 11',
   );
 
   // Remove the cache so that an initial build and build with cache can be tested
   await rimraf('./node_modules/.cache');
 
   let start = Date.now();
-  await ng('build');
+  await ng('build', '--configuration=development');
   let initial = Date.now() - start;
   oldHashes = generateFileHashMap();
 
   start = Date.now();
-  await ng('build');
+  await ng('build', '--configuration=development');
   let cached = Date.now() - start;
   newHashes = generateFileHashMap();
 
@@ -76,12 +76,12 @@ export default async function() {
   await rimraf('./node_modules/.cache');
 
   start = Date.now();
-  await ng('build', '--prod');
+  await ng('build');
   initial = Date.now() - start;
   oldHashes = generateFileHashMap();
 
   start = Date.now();
-  await ng('build', '--prod');
+  await ng('build');
   cached = Date.now() - start;
   newHashes = generateFileHashMap();
 

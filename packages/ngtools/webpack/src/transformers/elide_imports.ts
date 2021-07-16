@@ -1,13 +1,12 @@
 /**
  * @license
- * Copyright Google Inc. All Rights Reserved.
+ * Copyright Google LLC All Rights Reserved.
  *
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
-import * as ts from 'typescript';
-import { RemoveNodeOperation, TransformOperation } from './interfaces';
 
+import * as ts from 'typescript';
 
 // Remove imports for which all identifiers have been removed.
 // Needs type checker, and works even if it's not the first transformer.
@@ -20,11 +19,11 @@ export function elideImports(
   removedNodes: ts.Node[],
   getTypeChecker: () => ts.TypeChecker,
   compilerOptions: ts.CompilerOptions,
-): TransformOperation[] {
-  const ops: TransformOperation[] = [];
+): Set<ts.Node> {
+  const importNodeRemovals = new Set<ts.Node>();
 
   if (removedNodes.length === 0) {
-    return [];
+    return importNodeRemovals;
   }
 
   const typeChecker = getTypeChecker();
@@ -48,7 +47,9 @@ export function elideImports(
 
     // Record import and skip
     if (ts.isImportDeclaration(node)) {
-      imports.push(node);
+      if (!node.importClause?.isTypeOnly) {
+        imports.push(node);
+      }
 
       return;
     }
@@ -73,9 +74,12 @@ export function elideImports(
           // - A constructor parameter can be decorated or the class itself is decorated.
           // - The parent of the parameter is decorated example a method declaration or a set accessor.
           // In all cases we need the type reference not to be elided.
-          isTypeReferenceForDecoratoredNode = !!(parent.decorators?.length ||
+          isTypeReferenceForDecoratoredNode = !!(
+            parent.decorators?.length ||
             (ts.isSetAccessor(parent.parent) && !!parent.parent.decorators?.length) ||
-            (ts.isConstructorDeclaration(parent.parent) && !!parent.parent.parent.decorators?.length));
+            (ts.isConstructorDeclaration(parent.parent) &&
+              !!parent.parent.parent.decorators?.length)
+          );
           break;
       }
 
@@ -85,7 +89,15 @@ export function elideImports(
     } else {
       switch (node.kind) {
         case ts.SyntaxKind.Identifier:
-          symbol = typeChecker.getSymbolAtLocation(node);
+          const parent = node.parent;
+          if (parent && ts.isShorthandPropertyAssignment(parent)) {
+            const shorthandSymbol = typeChecker.getShorthandAssignmentValueSymbol(parent);
+            if (shorthandSymbol) {
+              symbol = shorthandSymbol;
+            }
+          } else {
+            symbol = typeChecker.getSymbolAtLocation(node);
+          }
           break;
         case ts.SyntaxKind.ExportSpecifier:
           symbol = typeChecker.getExportSpecifierLocalTargetSymbol(node as ts.ExportSpecifier);
@@ -104,10 +116,15 @@ export function elideImports(
   });
 
   if (imports.length === 0) {
-    return [];
+    return importNodeRemovals;
   }
 
   const isUnused = (node: ts.Identifier) => {
+    // Do not remove JSX factory imports
+    if (node.text === compilerOptions.jsxFactory) {
+      return false;
+    }
+
     const symbol = typeChecker.getSymbolAtLocation(node);
 
     return symbol && !usedSymbols.has(symbol);
@@ -124,10 +141,10 @@ export function elideImports(
     if (namedBindings && ts.isNamespaceImport(namedBindings)) {
       // "import * as XYZ from 'abc';"
       if (isUnused(namedBindings.name)) {
-        ops.push(new RemoveNodeOperation(sourceFile, node));
+        importNodeRemovals.add(node);
       }
     } else {
-      const specifierOps = [];
+      const specifierNodeRemovals = [];
       let clausesCount = 0;
 
       // "import { XYZ, ... } from 'abc';"
@@ -139,11 +156,10 @@ export function elideImports(
           if (isUnused(specifier.name)) {
             removedClausesCount++;
             // in case we don't have any more namedImports we should remove the parent ie the {}
-            const nodeToRemove = clausesCount === removedClausesCount
-              ? specifier.parent
-              : specifier;
+            const nodeToRemove =
+              clausesCount === removedClausesCount ? specifier.parent : specifier;
 
-            specifierOps.push(new RemoveNodeOperation(sourceFile, nodeToRemove));
+            specifierNodeRemovals.push(nodeToRemove);
           }
         }
       }
@@ -153,17 +169,19 @@ export function elideImports(
         clausesCount++;
 
         if (isUnused(node.importClause.name)) {
-          specifierOps.push(new RemoveNodeOperation(sourceFile, node.importClause.name));
+          specifierNodeRemovals.push(node.importClause.name);
         }
       }
 
-      if (specifierOps.length === clausesCount) {
-        ops.push(new RemoveNodeOperation(sourceFile, node));
+      if (specifierNodeRemovals.length === clausesCount) {
+        importNodeRemovals.add(node);
       } else {
-        ops.push(...specifierOps);
+        for (const specifierNodeRemoval of specifierNodeRemovals) {
+          importNodeRemovals.add(specifierNodeRemoval);
+        }
       }
     }
   }
 
-  return ops;
+  return importNodeRemovals;
 }

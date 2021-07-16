@@ -1,10 +1,11 @@
 /**
  * @license
- * Copyright Google Inc. All Rights Reserved.
+ * Copyright Google LLC All Rights Reserved.
  *
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
+
 import { join, normalize, strings } from '@angular-devkit/core';
 import {
   Rule,
@@ -17,11 +18,23 @@ import {
   move,
   url,
 } from '@angular-devkit/schematics';
+import { NodeDependencyType, addPackageJsonDependency } from '../utility/dependencies';
+import { JSONFile } from '../utility/json-file';
 import { relativePathToWorkspaceRoot } from '../utility/paths';
-import { addTsConfigProjectReferences, verifyBaseTsConfigExists } from '../utility/tsconfig';
 import { getWorkspace, updateWorkspace } from '../utility/workspace';
 import { Builders } from '../utility/workspace-models';
 import { Schema as E2eOptions } from './schema';
+
+function addScriptsToPackageJson(): Rule {
+  return (host) => {
+    const pkgJson = new JSONFile(host, 'package.json');
+    const e2eScriptPath = ['scripts', 'e2e'];
+
+    if (!pkgJson.get(e2eScriptPath)) {
+      pkgJson.modify(e2eScriptPath, 'ng e2e', false);
+    }
+  };
+}
 
 export default function (options: E2eOptions): Rule {
   return async (host: Tree) => {
@@ -32,30 +45,24 @@ export default function (options: E2eOptions): Rule {
       throw new SchematicsException(`Project name "${appProject}" doesn't not exist.`);
     }
 
-    verifyBaseTsConfigExists(host);
-
     const root = join(normalize(project.root), 'e2e');
 
     project.targets.add({
       name: 'e2e',
       builder: Builders.Protractor,
+      defaultConfiguration: 'development',
       options: {
         protractorConfig: `${root}/protractor.conf.js`,
-        devServerTarget: `${options.relatedAppName}:serve`,
       },
       configurations: {
         production: {
           devServerTarget: `${options.relatedAppName}:serve:production`,
         },
+        development: {
+          devServerTarget: `${options.relatedAppName}:serve:development`,
+        },
       },
     });
-
-    const e2eTsConfig = `${root}/tsconfig.json`;
-    const lintTarget = project.targets.get('lint');
-    if (lintTarget && lintTarget.options && Array.isArray(lintTarget.options.tsConfig)) {
-      lintTarget.options.tsConfig =
-        lintTarget.options.tsConfig.concat(e2eTsConfig);
-    }
 
     return chain([
       updateWorkspace(workspace),
@@ -67,10 +74,27 @@ export default function (options: E2eOptions): Rule {
             relativePathToWorkspaceRoot: relativePathToWorkspaceRoot(root),
           }),
           move(root),
-        ])),
-      addTsConfigProjectReferences([
-        e2eTsConfig,
-      ]),
+        ]),
+      ),
+      (host) =>
+        [
+          {
+            type: NodeDependencyType.Dev,
+            name: 'protractor',
+            version: '~7.0.0',
+          },
+          {
+            type: NodeDependencyType.Dev,
+            name: 'jasmine-spec-reporter',
+            version: '~7.0.0',
+          },
+          {
+            type: NodeDependencyType.Dev,
+            name: 'ts-node',
+            version: '~9.1.1',
+          },
+        ].forEach((dep) => addPackageJsonDependency(host, dep)),
+      addScriptsToPackageJson(),
     ]);
   };
 }

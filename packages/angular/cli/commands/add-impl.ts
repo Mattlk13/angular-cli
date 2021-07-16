@@ -1,35 +1,39 @@
 /**
  * @license
- * Copyright Google Inc. All Rights Reserved.
+ * Copyright Google LLC All Rights Reserved.
  *
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
+
 import { analytics, tags } from '@angular-devkit/core';
 import { NodePackageDoesNotSupportSchematics } from '@angular-devkit/schematics/tools';
 import { dirname, join } from 'path';
 import { intersects, prerelease, rcompare, satisfies, valid, validRange } from 'semver';
-import { PackageManager } from '../lib/config/schema';
+import { PackageManager } from '../lib/config/workspace-schema';
 import { isPackageNameSafeForAnalytics } from '../models/analytics';
 import { Arguments } from '../models/interface';
 import { RunSchematicOptions, SchematicCommand } from '../models/schematic-command';
-import { installPackage, installTempPackage } from '../tasks/install-package';
 import { colors } from '../utilities/color';
-import { getPackageManager } from '../utilities/package-manager';
+import { installPackage, installTempPackage } from '../utilities/install-package';
+import { ensureCompatibleNpm, getPackageManager } from '../utilities/package-manager';
 import {
   NgAddSaveDepedency,
   PackageManifest,
   fetchPackageManifest,
   fetchPackageMetadata,
 } from '../utilities/package-metadata';
+import { askConfirmation } from '../utilities/prompt';
+import { Spinner } from '../utilities/spinner';
+import { isTTY } from '../utilities/tty';
 import { Schema as AddCommandSchema } from './add';
 
 const npa = require('npm-package-arg');
 
 export class AddCommand extends SchematicCommand<AddCommandSchema> {
-  readonly allowPrivateSchematics = true;
+  override readonly allowPrivateSchematics = true;
 
-  async initialize(options: AddCommandSchema & Arguments) {
+  override async initialize(options: AddCommandSchema & Arguments) {
     if (options.registry) {
       return super.initialize({ ...options, packageRegistry: options.registry });
     } else {
@@ -38,6 +42,8 @@ export class AddCommand extends SchematicCommand<AddCommandSchema> {
   }
 
   async run(options: AddCommandSchema & Arguments) {
+    await ensureCompatibleNpm(this.context.root);
+
     if (!options.collection) {
       this.logger.fatal(
         `The "ng add" command requires a name argument to be specified eg. ` +
@@ -79,12 +85,18 @@ export class AddCommand extends SchematicCommand<AddCommandSchema> {
       }
     }
 
-    const packageManager = await getPackageManager(this.workspace.root);
+    const spinner = new Spinner();
+
+    spinner.start('Determining package manager...');
+    const packageManager = await getPackageManager(this.context.root);
     const usingYarn = packageManager === PackageManager.Yarn;
+    spinner.info(`Using package manager: ${colors.grey(packageManager)}`);
 
     if (packageIdentifier.type === 'tag' && !packageIdentifier.rawSpec) {
       // only package name provided; search for viable version
       // plus special cases for packages that did not have peer deps setup
+      spinner.start('Searching for compatible package version...');
+
       let packageMetadata;
       try {
         packageMetadata = await fetchPackageMetadata(packageIdentifier.name, this.logger, {
@@ -93,7 +105,7 @@ export class AddCommand extends SchematicCommand<AddCommandSchema> {
           verbose: options.verbose,
         });
       } catch (e) {
-        this.logger.error('Unable to fetch package metadata: ' + e.message);
+        spinner.fail('Unable to load package information from registry: ' + e.message);
 
         return 1;
       }
@@ -102,8 +114,7 @@ export class AddCommand extends SchematicCommand<AddCommandSchema> {
       if (latestManifest && Object.keys(latestManifest.peerDependencies).length === 0) {
         if (latestManifest.name === '@angular/pwa') {
           const version = await this.findProjectVersion('@angular/cli');
-          // tslint:disable-next-line:no-any
-          const semverOptions = { includePrerelease: true } as any;
+          const semverOptions = { includePrerelease: true };
 
           if (
             version &&
@@ -112,12 +123,15 @@ export class AddCommand extends SchematicCommand<AddCommandSchema> {
           ) {
             packageIdentifier = npa.resolve('@angular/pwa', '0.12');
           }
+        } else {
+          packageIdentifier = npa.resolve(latestManifest.name, latestManifest.version);
         }
+        spinner.succeed(`Found compatible package version: ${colors.grey(packageIdentifier)}.`);
       } else if (!latestManifest || (await this.hasMismatchedPeer(latestManifest))) {
         // 'latest' is invalid so search for most recent matching package
         const versionManifests = Object.values(packageMetadata.versions).filter(
-          (value: PackageManifest) => !prerelease(value.version),
-        ) as PackageManifest[];
+          (value: PackageManifest) => !prerelease(value.version) && !value.deprecated,
+        );
 
         versionManifests.sort((a, b) => rcompare(a.version, b.version, true));
 
@@ -130,10 +144,14 @@ export class AddCommand extends SchematicCommand<AddCommandSchema> {
         }
 
         if (!newIdentifier) {
-          this.logger.warn("Unable to find compatible package.  Using 'latest'.");
+          spinner.warn("Unable to find compatible package.  Using 'latest'.");
         } else {
           packageIdentifier = newIdentifier;
+          spinner.succeed(`Found compatible package version: ${colors.grey(packageIdentifier)}.`);
         }
+      } else {
+        packageIdentifier = npa.resolve(latestManifest.name, latestManifest.version);
+        spinner.succeed(`Found compatible package version: ${colors.grey(packageIdentifier)}.`);
       }
     }
 
@@ -141,57 +159,83 @@ export class AddCommand extends SchematicCommand<AddCommandSchema> {
     let savePackage: NgAddSaveDepedency | undefined;
 
     try {
+      spinner.start('Loading package information from registry...');
       const manifest = await fetchPackageManifest(packageIdentifier, this.logger, {
         registry: options.registry,
         verbose: options.verbose,
         usingYarn,
       });
 
-      savePackage = manifest['ng-add'] && manifest['ng-add'].save;
+      savePackage = manifest['ng-add']?.save;
       collectionName = manifest.name;
 
       if (await this.hasMismatchedPeer(manifest)) {
-        this.logger.warn(
-          'Package has unmet peer dependencies. Adding the package may not succeed.',
-        );
+        spinner.warn('Package has unmet peer dependencies. Adding the package may not succeed.');
+      } else {
+        spinner.succeed(`Package information loaded.`);
       }
     } catch (e) {
-      this.logger.error('Unable to fetch package manifest: ' + e.message);
+      spinner.fail(`Unable to fetch package information for '${packageIdentifier}': ${e.message}`);
 
       return 1;
+    }
+
+    if (!options.skipConfirmation) {
+      const confirmationResponse = await askConfirmation(
+        `\nThe package ${colors.blue(packageIdentifier.raw)} will be installed and executed.\n` +
+          'Would you like to proceed?',
+        true,
+        false,
+      );
+
+      if (!confirmationResponse) {
+        if (!isTTY) {
+          this.logger.error(
+            'No terminal detected. ' +
+              `'--skip-confirmation' can be used to bypass installation confirmation. ` +
+              `Ensure package name is correct prior to '--skip-confirmation' option usage.`,
+          );
+        }
+        this.logger.error('Command aborted.');
+
+        return 1;
+      }
     }
 
     if (savePackage === false) {
       // Temporary packages are located in a different directory
       // Hence we need to resolve them using the temp path
-      const tempPath = installTempPackage(
+      const { status, tempNodeModules } = await installTempPackage(
         packageIdentifier.raw,
-        this.logger,
         packageManager,
         options.registry ? [`--registry="${options.registry}"`] : undefined,
       );
-      const resolvedCollectionPath = require.resolve(
-        join(collectionName, 'package.json'),
-        {
-          paths: [tempPath],
-        },
-      );
+      const resolvedCollectionPath = require.resolve(join(collectionName, 'package.json'), {
+        paths: [tempNodeModules],
+      });
+
+      if (status !== 0) {
+        return status;
+      }
 
       collectionName = dirname(resolvedCollectionPath);
     } else {
-      installPackage(
+      const status = await installPackage(
         packageIdentifier.raw,
-        this.logger,
         packageManager,
         savePackage,
         options.registry ? [`--registry="${options.registry}"`] : undefined,
       );
+
+      if (status !== 0) {
+        return status;
+      }
     }
 
     return this.executeSchematic(collectionName, options['--']);
   }
 
-  async reportAnalytics(
+  override async reportAnalytics(
     paths: string[],
     options: AddCommandSchema & Arguments,
     dimensions: (boolean | number | string)[] = [],
@@ -211,7 +255,7 @@ export class AddCommand extends SchematicCommand<AddCommandSchema> {
 
   private isPackageInstalled(name: string): boolean {
     try {
-      require.resolve(join(name, 'package.json'), { paths: [this.workspace.root] });
+      require.resolve(join(name, 'package.json'), { paths: [this.context.root] });
 
       return true;
     } catch (e) {
@@ -255,7 +299,7 @@ export class AddCommand extends SchematicCommand<AddCommandSchema> {
     let installedPackage;
     try {
       installedPackage = require.resolve(join(name, 'package.json'), {
-        paths: [this.workspace.root],
+        paths: [this.context.root],
       });
     } catch {}
 
@@ -269,7 +313,7 @@ export class AddCommand extends SchematicCommand<AddCommandSchema> {
 
     let projectManifest;
     try {
-      projectManifest = await fetchPackageManifest(this.workspace.root, this.logger);
+      projectManifest = await fetchPackageManifest(this.context.root, this.logger);
     } catch {}
 
     if (projectManifest) {
@@ -299,8 +343,7 @@ export class AddCommand extends SchematicCommand<AddCommandSchema> {
             continue;
           }
 
-          // tslint:disable-next-line:no-any
-          const options = { includePrerelease: true } as any;
+          const options = { includePrerelease: true };
 
           if (
             !intersects(version, peerIdentifier.rawSpec, options) &&

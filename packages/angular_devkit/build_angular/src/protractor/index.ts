@@ -1,10 +1,11 @@
 /**
  * @license
- * Copyright Google Inc. All Rights Reserved.
+ * Copyright Google LLC All Rights Reserved.
  *
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
+
 import {
   BuilderContext,
   BuilderOutput,
@@ -14,6 +15,7 @@ import {
 import { JsonObject, tags } from '@angular-devkit/core';
 import { resolve } from 'path';
 import * as url from 'url';
+import { DevServerBuilderOptions } from '../dev-server/index';
 import { runModuleAsObservableFork } from '../utils';
 import { Schema as ProtractorBuilderOptions } from './schema';
 
@@ -38,12 +40,10 @@ function runProtractor(root: string, options: ProtractorBuilderOptions): Promise
   // TODO: Protractor manages process.exit itself, so this target will allways quit the
   // process. To work around this we run it in a subprocess.
   // https://github.com/angular/protractor/issues/4160
-  return runModuleAsObservableFork(
-    root,
-    'protractor/built/launcher',
-    'init',
-    [resolve(root, options.protractorConfig), additionalProtractorConfig],
-  ).toPromise() as Promise<BuilderOutput>;
+  return runModuleAsObservableFork(root, 'protractor/built/launcher', 'init', [
+    resolve(root, options.protractorConfig),
+    additionalProtractorConfig,
+  ]).toPromise() as Promise<BuilderOutput>;
 }
 
 async function updateWebdriver() {
@@ -68,7 +68,6 @@ async function updateWebdriver() {
     `);
   }
 
-  // tslint:disable-next-line:max-line-length no-implicit-dependencies
   const webdriverUpdate = await import(path);
   // const webdriverUpdate = await import(path) as typeof import ('webdriver-manager/built/lib/cmds/update');
 
@@ -83,10 +82,17 @@ async function updateWebdriver() {
 
 export { ProtractorBuilderOptions };
 
+/**
+ * @experimental Direct usage of this function is considered experimental.
+ */
 export async function execute(
   options: ProtractorBuilderOptions,
   context: BuilderContext,
 ): Promise<BuilderOutput> {
+  context.logger.warn(
+    'Protractor has been deprecated including its support in the Angular CLI. For additional information and alternatives, please see https://github.com/angular/protractor/issues/5502.',
+  );
+
   // ensure that only one of these options is used
   if (options.devServerTarget && options.baseUrl) {
     throw new Error(tags.stripIndents`
@@ -105,7 +111,11 @@ export async function execute(
     const target = targetFromTargetString(options.devServerTarget);
     const serverOptions = await context.getTargetOptions(target);
 
-    const overrides: Record<string, string | number | boolean> = { watch: false };
+    const overrides = {
+      watch: false,
+      liveReload: false,
+    } as DevServerBuilderOptions;
+
     if (options.host !== undefined) {
       overrides.host = options.host;
     } else if (typeof serverOptions.host === 'string') {
@@ -129,9 +139,7 @@ export async function execute(
     if (typeof serverOptions.publicHost === 'string') {
       let publicHost = serverOptions.publicHost as string;
       if (!/^\w+:\/\//.test(publicHost)) {
-        publicHost = `${serverOptions.ssl
-          ? 'https'
-          : 'http'}://${publicHost}`;
+        publicHost = `${serverOptions.ssl ? 'https' : 'http'}://${publicHost}`;
       }
       const clientUrl = url.parse(publicHost);
       baseUrl = url.format(clientUrl);

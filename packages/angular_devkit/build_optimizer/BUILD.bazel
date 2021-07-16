@@ -3,10 +3,13 @@
 # Use of this source code is governed by an MIT-style license that can be
 # found in the LICENSE file at https://angular.io/license
 
-load("@bazel_tools//tools/build_defs/pkg:pkg.bzl", "pkg_tar")
-load("@npm_bazel_jasmine//:index.bzl", "jasmine_node_test")
-load("@build_bazel_rules_nodejs//:index.bzl", "pkg_npm")
+load("@npm//@bazel/jasmine:index.bzl", "jasmine_node_test")
 load("//tools:defaults.bzl", "ts_library")
+
+# @external_begin
+load("@bazel_tools//tools/build_defs/pkg:pkg.bzl", "pkg_tar")
+load("@build_bazel_rules_nodejs//:index.bzl", "pkg_npm")
+# @external_end
 
 licenses(["notice"])  # MIT
 
@@ -31,12 +34,11 @@ ts_library(
     module_name = "@angular-devkit/build-optimizer",
     module_root = "src/index.d.ts",
     deps = [
-        "//packages/angular_devkit/build_optimizer/third_party/github.com/Microsoft/TypeScript",
         "@npm//@types/node",
-        "@npm//@types/webpack",
-        "@npm//@types/webpack-sources",
         "@npm//source-map",
         "@npm//tslib",
+        "@npm//typescript",
+        "@npm//webpack",
     ],
 )
 
@@ -47,9 +49,9 @@ ts_library(
     # @external_begin
     deps = [
         ":build_optimizer",
-        "//packages/angular_devkit/build_optimizer/third_party/github.com/Microsoft/TypeScript",
         "//packages/angular_devkit/core",
         "@npm//source-map",
+        "@npm//typescript",
     ],
     # @external_end
 )
@@ -63,15 +65,7 @@ jasmine_node_test(
     ],
 )
 
-jasmine_node_test(
-    name = "no_typescript_runtime_dep_test",
-    srcs = ["no_typescript_runtime_dep_spec.js"],
-    deps = [
-        ":build_optimizer",
-        "@npm//jasmine",
-    ],
-)
-
+# @external_begin
 pkg_npm(
     name = "npm_package",
     deps = [
@@ -86,3 +80,4 @@ pkg_tar(
     strip_prefix = "./npm_package",
     tags = ["manual"],
 )
+# @external_end

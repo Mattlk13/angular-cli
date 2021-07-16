@@ -3,10 +3,13 @@
 # Use of this source code is governed by an MIT-style license that can be
 # found in the LICENSE file at https://angular.io/license
 
-load("@bazel_tools//tools/build_defs/pkg:pkg.bzl", "pkg_tar")
-load("@npm_bazel_jasmine//:index.bzl", "jasmine_node_test")
-load("@build_bazel_rules_nodejs//:index.bzl", "pkg_npm")
+load("@npm//@bazel/jasmine:index.bzl", "jasmine_node_test")
 load("//tools:defaults.bzl", "ts_library")
+
+# @external_begin
+load("@bazel_tools//tools/build_defs/pkg:pkg.bzl", "pkg_tar")
+load("@build_bazel_rules_nodejs//:index.bzl", "pkg_npm")
+# @external_end
 
 licenses(["notice"])  # MIT
 
@@ -32,17 +35,11 @@ ts_library(
     module_name = "@ngtools/webpack",
     module_root = "src/index.d.ts",
     deps = [
-        "//packages/angular_devkit/core",
-        "//packages/angular_devkit/core/node",
         "@npm//@angular/compiler-cli",
         "@npm//@types/node",
-        "@npm//@types/webpack",
-        "@npm//@types/webpack-sources",
         "@npm//enhanced-resolve",
-        "@npm//rxjs",
         "@npm//typescript",
         "@npm//webpack",
-        "@npm//webpack-sources",
     ],
 )
 
@@ -70,9 +67,11 @@ jasmine_node_test(
     deps = [
         "@npm//jasmine",
         "@npm//source-map",
+        "@npm//tslib",
     ],
 )
 
+# @external_begin
 pkg_npm(
     name = "npm_package",
     deps = [
@@ -87,3 +86,4 @@ pkg_tar(
     strip_prefix = "./npm_package",
     tags = ["manual"],
 )
+# @external_end

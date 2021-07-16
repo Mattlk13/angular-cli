@@ -1,10 +1,11 @@
 import { expectFileToMatch } from '../../utils/fs';
-import { ng, silentNpm } from '../../utils/process';
+import { installPackage } from '../../utils/packages';
+import { ng } from '../../utils/process';
 import { updateJsonFile } from '../../utils/project';
 
 export default async function() {
   // Install material design icons
-  await silentNpm('install', 'material-design-icons@3.0.1');
+  await installPackage('material-design-icons@3.0.1');
 
   // Add icon stylesheet to application
   await updateJsonFile('angular.json', workspaceJson => {
@@ -15,14 +16,14 @@ export default async function() {
   });
 
   // Build dev application
-  await ng('build', '--extract-css');
+  await ng('build', '--extract-css', '--configuration=development');
 
   // Ensure icons are included
-  await expectFileToMatch('dist/test-project/styles.css', 'Material Icons')
+  await expectFileToMatch('dist/test-project/styles.css', 'Material Icons');
 
   // Build prod application
-  await ng('build', '--prod', '--extract-css', '--output-hashing=none');
+  await ng('build', '--extract-css', '--output-hashing=none');
 
   // Ensure icons are included
-  await expectFileToMatch('dist/test-project/styles.css', 'Material Icons')
+  await expectFileToMatch('dist/test-project/styles.css', 'Material Icons');
 }

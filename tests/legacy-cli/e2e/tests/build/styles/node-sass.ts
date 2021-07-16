@@ -4,7 +4,8 @@ import {
   replaceInFile,
   writeMultipleFiles,
 } from '../../../utils/fs';
-import { ng, silentExec, silentNpm } from '../../../utils/process';
+import { installPackage } from '../../../utils/packages';
+import { ng, silentExec } from '../../../utils/process';
 import { updateJsonFile } from '../../../utils/project';
 import { expectToFail } from '../../../utils/utils';
 
@@ -30,22 +31,22 @@ export default async function () {
 
   await silentExec('rm', '-rf', 'node_modules/node-sass');
   await silentExec('rm', '-rf', 'node_modules/sass');
-  await expectToFail(() => ng('build', '--extract-css', '--source-map'));
+  await expectToFail(() => ng('build', '--extract-css', '--source-map', '--configuration=development'));
 
-  await silentNpm('install', 'node-sass');
+  await installPackage('node-sass');
   await silentExec('rm', '-rf', 'node_modules/sass');
-  await ng('build', '--extract-css', '--source-map');
+  await ng('build', '--extract-css', '--source-map', '--configuration=development');
 
   await expectFileToMatch('dist/test-project/styles.css', /body\s*{\s*background-color: blue;\s*}/);
   await expectFileToMatch('dist/test-project/styles.css', /p\s*{\s*background-color: red;\s*}/);
   await expectToFail(() => expectFileToMatch('dist/test-project/styles.css', '"mappings":""'));
   await expectFileToMatch('dist/test-project/main.js', /.outer.*.inner.*background:\s*#[fF]+/);
 
-  await silentNpm('install', 'node-gyp');
-  await silentNpm('install', 'fibers');
-  await silentNpm('install', 'sass');
+  await installPackage('node-gyp');
+  await installPackage('fibers');
+  await installPackage('sass');
   await silentExec('rm', '-rf', 'node_modules/node-sass');
-  await ng('build', '--extract-css', '--source-map');
+  await ng('build', '--extract-css', '--source-map', '--configuration=development');
 
   await expectFileToMatch('dist/test-project/styles.css', /body\s*{\s*background-color: blue;\s*}/);
   await expectFileToMatch('dist/test-project/styles.css', /p\s*{\s*background-color: red;\s*}/);

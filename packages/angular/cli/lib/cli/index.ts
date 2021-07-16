@@ -1,62 +1,60 @@
 /**
  * @license
- * Copyright Google Inc. All Rights Reserved.
+ * Copyright Google LLC All Rights Reserved.
  *
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
+
 import { createConsoleLogger } from '@angular-devkit/core/node';
 import { format } from 'util';
 import { runCommand } from '../../models/command-runner';
-import { colors, removeColor, supportsColor } from '../../utilities/color';
-import { getWorkspaceRaw } from '../../utilities/config';
+import { colors, removeColor } from '../../utilities/color';
+import { AngularWorkspace, getWorkspaceRaw } from '../../utilities/config';
 import { writeErrorToLogFile } from '../../utilities/log-file';
-import { getWorkspaceDetails } from '../../utilities/project';
+import { findWorkspaceFile } from '../../utilities/project';
+
+export { VERSION, Version } from '../../models/version';
 
 const debugEnv = process.env['NG_DEBUG'];
-const isDebug =
-  debugEnv !== undefined &&
-  debugEnv !== '0' &&
-  debugEnv.toLowerCase() !== 'false';
+const isDebug = debugEnv !== undefined && debugEnv !== '0' && debugEnv.toLowerCase() !== 'false';
 
-// tslint:disable: no-console
-export default async function(options: { testing?: boolean; cliArgs: string[] }) {
+/* eslint-disable no-console */
+export default async function (options: { testing?: boolean; cliArgs: string[] }) {
   // This node version check ensures that the requirements of the project instance of the CLI are met
-  const version = process.versions.node.split('.').map(part => Number(part));
-  if (version[0] < 10 || version[0] === 11 || (version[0] === 10 && version[1] < 13)) {
+  const version = process.versions.node.split('.').map((part) => Number(part));
+  if (version[0] < 12 || (version[0] === 12 && version[1] < 14)) {
     process.stderr.write(
       `Node.js version ${process.version} detected.\n` +
-      'The Angular CLI requires a minimum Node.js version of either v10.13 or v12.0.\n\n' +
-      'Please update your Node.js version or visit https://nodejs.org/ for additional instructions.\n',
+        'The Angular CLI requires a minimum v12.14.\n\n' +
+        'Please update your Node.js version or visit https://nodejs.org/ for additional instructions.\n',
     );
 
     return 3;
   }
 
   const logger = createConsoleLogger(isDebug, process.stdout, process.stderr, {
-    info: s => (supportsColor ? s : removeColor(s)),
-    debug: s => (supportsColor ? s : removeColor(s)),
-    warn: s => (supportsColor ? colors.bold.yellow(s) : removeColor(s)),
-    error: s => (supportsColor ? colors.bold.red(s) : removeColor(s)),
-    fatal: s => (supportsColor ? colors.bold.red(s) : removeColor(s)),
+    info: (s) => (colors.enabled ? s : removeColor(s)),
+    debug: (s) => (colors.enabled ? s : removeColor(s)),
+    warn: (s) => (colors.enabled ? colors.bold.yellow(s) : removeColor(s)),
+    error: (s) => (colors.enabled ? colors.bold.red(s) : removeColor(s)),
+    fatal: (s) => (colors.enabled ? colors.bold.red(s) : removeColor(s)),
   });
 
   // Redirect console to logger
-  console.log = function() {
-    logger.info(format.apply(null, arguments));
+  console.info = console.log = function (...args) {
+    logger.info(format(...args));
   };
-  console.info = function() {
-    logger.info(format.apply(null, arguments));
+  console.warn = function (...args) {
+    logger.warn(format(...args));
   };
-  console.warn = function() {
-    logger.warn(format.apply(null, arguments));
-  };
-  console.error = function() {
-    logger.error(format.apply(null, arguments));
+  console.error = function (...args) {
+    logger.error(format(...args));
   };
 
-  let projectDetails = getWorkspaceDetails();
-  if (projectDetails === null) {
+  let workspace;
+  const workspaceFile = findWorkspaceFile();
+  if (workspaceFile === null) {
     const [, localPath] = getWorkspaceRaw('local');
     if (localPath !== null) {
       logger.fatal(
@@ -66,12 +64,18 @@ export default async function(options: { testing?: boolean; cliArgs: string[] })
 
       return 1;
     }
+  } else {
+    try {
+      workspace = await AngularWorkspace.load(workspaceFile);
+    } catch (e) {
+      logger.fatal(`Unable to read workspace file '${workspaceFile}': ${e.message}`);
 
-    projectDetails = { root: process.cwd() };
+      return 1;
+    }
   }
 
   try {
-    const maybeExitCode = await runCommand(options.cliArgs, logger, projectDetails);
+    const maybeExitCode = await runCommand(options.cliArgs, logger, workspace);
     if (typeof maybeExitCode === 'number') {
       console.assert(Number.isInteger(maybeExitCode));
 
@@ -107,7 +111,7 @@ export default async function(options: { testing?: boolean; cliArgs: string[] })
     }
 
     if (options.testing) {
-      // tslint:disable-next-line: no-debugger
+      // eslint-disable-next-line no-debugger
       debugger;
       throw err;
     }

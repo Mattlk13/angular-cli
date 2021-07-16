@@ -1,17 +1,19 @@
 #!/usr/bin/env node
 /**
  * @license
- * Copyright Google Inc. All Rights Reserved.
+ * Copyright Google LLC All Rights Reserved.
  *
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
+
 import { Architect, BuilderInfo, BuilderProgressState, Target } from '@angular-devkit/architect';
 import { WorkspaceNodeModulesArchitectHost } from '@angular-devkit/architect/node';
-import { logging, schema, tags, terminal, workspaces } from '@angular-devkit/core';
+import { logging, schema, tags, workspaces } from '@angular-devkit/core';
 import { NodeJsSyncHost, createConsoleLogger } from '@angular-devkit/core/node';
+import * as ansiColors from 'ansi-colors';
 import { existsSync } from 'fs';
-import * as minimist from 'minimist';
+import minimist from 'minimist';
 import * as path from 'path';
 import { tap } from 'rxjs/operators';
 import { MultiProgressBar } from '../src/progress';
@@ -68,6 +70,10 @@ interface BarInfo {
   target?: Target;
 }
 
+// Create a separate instance to prevent unintended global changes to the color configuration
+// Create function is not defined in the typings. See: https://github.com/doowb/ansi-colors/pull/44
+const colors = (ansiColors as typeof ansiColors & { create: () => typeof ansiColors }).create();
+
 async function _executeTarget(
   parentLogger: logging.Logger,
   workspace: workspaces.WorkspaceDefinition,
@@ -84,16 +90,15 @@ async function _executeTarget(
   const targetSpec = { project, target, configuration };
 
   delete argv['help'];
-  delete argv['_'];
-
   const logger = new logging.Logger('jobs');
   const logs: logging.LogEntry[] = [];
-  logger.subscribe(entry => logs.push({ ...entry, message: `${entry.name}: ` + entry.message }));
+  logger.subscribe((entry) => logs.push({ ...entry, message: `${entry.name}: ` + entry.message }));
 
-  const run = await architect.scheduleTarget(targetSpec, argv, { logger });
+  const { _, ...options } = argv;
+  const run = await architect.scheduleTarget(targetSpec, options, { logger });
   const bars = new MultiProgressBar<number, BarInfo>(':name :bar (:current/:total) :status');
 
-  run.progress.subscribe(update => {
+  run.progress.subscribe((update) => {
     const data = bars.get(update.id) || {
       id: update.id,
       builder: update.builder,
@@ -137,16 +142,16 @@ async function _executeTarget(
   try {
     const { success } = await run.output
       .pipe(
-        tap(result => {
+        tap((result) => {
           if (result.success) {
-            parentLogger.info(terminal.green('SUCCESS'));
+            parentLogger.info(colors.green('SUCCESS'));
           } else {
-            parentLogger.info(terminal.yellow('FAILURE'));
+            parentLogger.info(colors.red('FAILURE'));
           }
           parentLogger.info('Result: ' + JSON.stringify({ ...result, info: undefined }, null, 4));
 
           parentLogger.info('\nLogs:');
-          logs.forEach(l => parentLogger.next(l));
+          logs.forEach((l) => parentLogger.next(l));
           logs.splice(0);
         }),
       )
@@ -157,9 +162,9 @@ async function _executeTarget(
 
     return success ? 0 : 1;
   } catch (err) {
-    parentLogger.info(terminal.red('ERROR'));
+    parentLogger.info(colors.red('ERROR'));
     parentLogger.info('\nLogs:');
-    logs.forEach(l => parentLogger.next(l));
+    logs.forEach((l) => parentLogger.next(l));
 
     parentLogger.fatal('Exception:');
     parentLogger.fatal(err.stack);
@@ -173,7 +178,13 @@ async function main(args: string[]): Promise<number> {
   const argv = minimist(args, { boolean: ['help'] });
 
   /** Create the DevKit Logger used through the CLI. */
-  const logger = createConsoleLogger(argv['verbose']);
+  const logger = createConsoleLogger(argv['verbose'], process.stdout, process.stderr, {
+    info: (s) => s,
+    debug: (s) => s,
+    warn: (s) => colors.bold.yellow(s),
+    error: (s) => colors.bold.red(s),
+    fatal: (s) => colors.bold.red(s),
+  });
 
   // Check the target.
   const targetStr = argv._[0] || '';
@@ -202,6 +213,9 @@ async function main(args: string[]): Promise<number> {
   const registry = new schema.CoreSchemaRegistry();
   registry.addPostTransform(schema.transforms.addUndefinedDefaults);
 
+  // Show usage of deprecated options
+  registry.useXDeprecatedProvider((msg) => logger.warn(msg));
+
   const { workspace } = await workspaces.readWorkspace(
     configFilePath,
     workspaces.createWorkspaceHost(new NodeJsSyncHost()),
@@ -214,11 +228,11 @@ async function main(args: string[]): Promise<number> {
 }
 
 main(process.argv.slice(2)).then(
-  code => {
+  (code) => {
     process.exit(code);
   },
-  err => {
-    // tslint:disable-next-line: no-console
+  (err) => {
+    // eslint-disable-next-line no-console
     console.error('Error: ' + err.stack || err.message || err);
     process.exit(-1);
   },

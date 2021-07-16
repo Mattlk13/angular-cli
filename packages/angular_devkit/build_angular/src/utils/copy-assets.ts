@@ -1,12 +1,13 @@
 /**
  * @license
- * Copyright Google Inc. All Rights Reserved.
+ * Copyright Google LLC All Rights Reserved.
  *
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
+
 import * as fs from 'fs';
-import * as glob from 'glob';
+import glob from 'glob';
 import * as path from 'path';
 import { copyFile } from './copy-file';
 
@@ -17,7 +18,14 @@ function globAsync(pattern: string, options: glob.IOptions) {
 }
 
 export async function copyAssets(
-  entries: { glob: string; ignore?: string[]; input: string; output: string; flatten?: boolean }[],
+  entries: {
+    glob: string;
+    ignore?: string[];
+    input: string;
+    output: string;
+    flatten?: boolean;
+    followSymlinks?: boolean;
+  }[],
   basePaths: Iterable<string>,
   root: string,
   changed?: Set<string>,
@@ -31,6 +39,7 @@ export async function copyAssets(
       dot: true,
       nodir: true,
       ignore: entry.ignore ? defaultIgnore.concat(entry.ignore) : defaultIgnore,
+      follow: entry.followSymlinks,
     });
 
     const directoryExists = new Set<string>();

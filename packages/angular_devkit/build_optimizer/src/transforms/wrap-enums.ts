@@ -1,27 +1,30 @@
 /**
  * @license
- * Copyright Google Inc. All Rights Reserved.
+ * Copyright Google LLC All Rights Reserved.
  *
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
-import * as ts from '../../third_party/github.com/Microsoft/TypeScript/lib/typescript';
+
+import * as ts from 'typescript';
 import { addPureComment } from '../helpers/ast-utils';
 
 function isBlockLike(node: ts.Node): node is ts.BlockLike {
-  return node.kind === ts.SyntaxKind.Block
-      || node.kind === ts.SyntaxKind.ModuleBlock
-      || node.kind === ts.SyntaxKind.CaseClause
-      || node.kind === ts.SyntaxKind.DefaultClause
-      || node.kind === ts.SyntaxKind.SourceFile;
+  return (
+    node.kind === ts.SyntaxKind.Block ||
+    node.kind === ts.SyntaxKind.ModuleBlock ||
+    node.kind === ts.SyntaxKind.CaseClause ||
+    node.kind === ts.SyntaxKind.DefaultClause ||
+    node.kind === ts.SyntaxKind.SourceFile
+  );
 }
 
 export function getWrapEnumsTransformer(): ts.TransformerFactory<ts.SourceFile> {
   return (context: ts.TransformationContext): ts.Transformer<ts.SourceFile> => {
-    const transformer: ts.Transformer<ts.SourceFile> = sf => {
+    const transformer: ts.Transformer<ts.SourceFile> = (sf) => {
       const result = visitBlockStatements(sf.statements, context);
 
-      return ts.updateSourceFileNode(sf, ts.setTextRange(result, sf.statements));
+      return context.factory.updateSourceFile(sf, ts.setTextRange(result, sf.statements));
     };
 
     return transformer;
@@ -32,9 +35,9 @@ function visitBlockStatements(
   statements: ts.NodeArray<ts.Statement>,
   context: ts.TransformationContext,
 ): ts.NodeArray<ts.Statement> {
-
   // copy of statements to modify; lazy initialized
   let updatedStatements: Array<ts.Statement> | undefined;
+  const nodeFactory = context.factory;
 
   const visitor: ts.Visitor = (node) => {
     if (isBlockLike(node)) {
@@ -45,13 +48,13 @@ function visitBlockStatements(
       result = ts.setTextRange(result, node.statements);
       switch (node.kind) {
         case ts.SyntaxKind.Block:
-          return ts.updateBlock(node, result);
+          return nodeFactory.updateBlock(node, result);
         case ts.SyntaxKind.ModuleBlock:
-          return ts.updateModuleBlock(node, result);
+          return nodeFactory.updateModuleBlock(node, result);
         case ts.SyntaxKind.CaseClause:
-          return ts.updateCaseClause(node, node.expression, result);
+          return nodeFactory.updateCaseClause(node, node.expression, result);
         case ts.SyntaxKind.DefaultClause:
-          return ts.updateDefaultClause(node, result);
+          return nodeFactory.updateDefaultClause(node, result);
         default:
           return node;
       }
@@ -83,57 +86,27 @@ function visitBlockStatements(
     //   * have only one declaration
     //   * have an ClassExpression or BinaryExpression and a right
     //     of kind ClassExpression as a initializer
-    if (ts.isVariableStatement(currentStatement)
-      && currentStatement.declarationList.declarations.length === 1) {
-
+    if (
+      ts.isVariableStatement(currentStatement) &&
+      currentStatement.declarationList.declarations.length === 1
+    ) {
       const variableDeclaration = currentStatement.declarationList.declarations[0];
       const initializer = variableDeclaration.initializer;
       if (ts.isIdentifier(variableDeclaration.name)) {
         const name = variableDeclaration.name.text;
 
         if (!initializer) {
-          const iife = findTs2_3EnumIife(name, statements[oIndex + 1]);
+          const iife = findEnumIife(name, statements[oIndex + 1]);
           if (iife) {
             // update IIFE and replace variable statement and old IIFE
             oldStatementsLength = 2;
-            newStatement = updateEnumIife(
-              currentStatement,
-              iife[0],
-              iife[1],
-            );
+            newStatement = updateEnumIife(nodeFactory, currentStatement, iife[0], iife[1]);
             // skip IIFE statement
             oIndex++;
           }
-        } else if (ts.isObjectLiteralExpression(initializer)) {
-          // tsickle es2015 enums first statement is an export declaration
-          const isPotentialEnumExport = ts.isExportDeclaration(statements[oIndex + 1]);
-          if (isPotentialEnumExport) {
-            // skip the export
-            oIndex++;
-          }
-
-          const enumStatements = findStatements(name, statements, oIndex, 1);
-          if (!enumStatements) {
-            continue;
-          }
-
-          // create wrapper and replace variable statement and enum member statements
-          oldStatementsLength = enumStatements.length + (isPotentialEnumExport ? 2 : 1);
-          newStatement = createWrappedEnum(
-            name,
-            currentStatement,
-            enumStatements,
-            initializer,
-            isPotentialEnumExport,
-          );
-          // skip enum member declarations
-          oIndex += enumStatements.length;
         } else if (
-          ts.isClassExpression(initializer)
-          || (
-            ts.isBinaryExpression(initializer)
-            && ts.isClassExpression(initializer.right)
-          )
+          ts.isClassExpression(initializer) ||
+          (ts.isBinaryExpression(initializer) && ts.isClassExpression(initializer.right))
         ) {
           const classStatements = findStatements(name, statements, oIndex);
           if (!classStatements) {
@@ -141,10 +114,7 @@ function visitBlockStatements(
           }
 
           oldStatementsLength = classStatements.length;
-          newStatement = createWrappedClass(
-            variableDeclaration,
-            classStatements,
-          );
+          newStatement = createWrappedClass(nodeFactory, variableDeclaration, classStatements);
 
           oIndex += classStatements.length - 1;
         }
@@ -157,12 +127,9 @@ function visitBlockStatements(
       }
 
       oldStatementsLength = classStatements.length;
-      newStatement = createWrappedClass(
-        currentStatement,
-        classStatements,
-      );
+      newStatement = createWrappedClass(nodeFactory, currentStatement, classStatements);
 
-      oIndex += classStatements.length - 1;
+      oIndex += oldStatementsLength - 1;
     }
 
     if (newStatement && newStatement.length > 0) {
@@ -173,7 +140,7 @@ function visitBlockStatements(
       updatedStatements.splice(uIndex, oldStatementsLength, ...newStatement);
       // When having more than a single new statement
       // we need to update the update Index
-      uIndex += (newStatement ? newStatement.length - 1 : 0);
+      uIndex += newStatement ? newStatement.length - 1 : 0;
     }
 
     const result = ts.visitNode(currentStatement, visitor);
@@ -187,11 +154,11 @@ function visitBlockStatements(
 
   // if changes, return updated statements
   // otherwise, return original array instance
-  return updatedStatements ? ts.createNodeArray(updatedStatements) : statements;
+  return updatedStatements ? nodeFactory.createNodeArray(updatedStatements) : statements;
 }
 
 // TS 2.3 enums have statements that are inside a IIFE.
-function findTs2_3EnumIife(
+function findEnumIife(
   name: string,
   statement: ts.Statement,
 ): [ts.CallExpression, ts.Expression | undefined] | null {
@@ -226,16 +193,19 @@ function findTs2_3EnumIife(
 
   let argument = callExpression.arguments[0];
   if (
-    !ts.isBinaryExpression(argument)
-    || !ts.isIdentifier(argument.left)
-    || argument.left.text !== name
+    !ts.isBinaryExpression(argument) ||
+    !ts.isIdentifier(argument.left) ||
+    argument.left.text !== name
   ) {
     return null;
   }
 
   let potentialExport = false;
   if (argument.operatorToken.kind === ts.SyntaxKind.FirstAssignment) {
-    if (ts.isBinaryExpression(argument.right) && argument.right.operatorToken.kind !== ts.SyntaxKind.BarBarToken) {
+    if (
+      ts.isBinaryExpression(argument.right) &&
+      argument.right.operatorToken.kind !== ts.SyntaxKind.BarBarToken
+    ) {
       return null;
     }
 
@@ -258,9 +228,9 @@ function findTs2_3EnumIife(
   // Go through all the statements and check that all match the name
   for (const statement of functionExpression.body.statements) {
     if (
-      !ts.isExpressionStatement(statement)
-      || !ts.isBinaryExpression(statement.expression)
-      || !ts.isElementAccessExpression(statement.expression.left)
+      !ts.isExpressionStatement(statement) ||
+      !ts.isBinaryExpression(statement.expression) ||
+      !ts.isElementAccessExpression(statement.expression.left)
     ) {
       return null;
     }
@@ -275,25 +245,24 @@ function findTs2_3EnumIife(
 }
 
 function updateHostNode(
+  nodeFactory: ts.NodeFactory,
   hostNode: ts.VariableStatement,
   expression: ts.Expression,
 ): ts.Statement {
   // Update existing host node with the pure comment before the variable declaration initializer.
   const variableDeclaration = hostNode.declarationList.declarations[0];
-  const outerVarStmt = ts.updateVariableStatement(
+  const outerVarStmt = nodeFactory.updateVariableStatement(
     hostNode,
     hostNode.modifiers,
-    ts.updateVariableDeclarationList(
-      hostNode.declarationList,
-      [
-        ts.updateVariableDeclaration(
-          variableDeclaration,
-          variableDeclaration.name,
-          variableDeclaration.type,
-          expression,
-        ),
-      ],
-    ),
+    nodeFactory.updateVariableDeclarationList(hostNode.declarationList, [
+      nodeFactory.updateVariableDeclaration(
+        variableDeclaration,
+        variableDeclaration.name,
+        variableDeclaration.exclamationToken,
+        variableDeclaration.type,
+        expression,
+      ),
+    ]),
   );
 
   return outerVarStmt;
@@ -337,7 +306,7 @@ function findStatements(
       const args = expression.arguments;
 
       if (args.length > 2) {
-        const isReferenced = args.some(arg => {
+        const isReferenced = args.some((arg) => {
           const potentialIdentifier = ts.isPropertyAccessExpression(arg) ? arg.expression : arg;
 
           return ts.isIdentifier(potentialIdentifier) && potentialIdentifier.text === name;
@@ -349,16 +318,15 @@ function findStatements(
         }
       }
     } else if (ts.isBinaryExpression(expression)) {
-      const node = ts.isBinaryExpression(expression.left)
-        ? expression.left.left
-        : expression.left;
+      const node = ts.isBinaryExpression(expression.left) ? expression.left.left : expression.left;
 
-      const leftExpression = ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)
-        // Static Properties // Ex: Foo.bar = 'value';
-        // ENUM Property // Ex:  ChangeDetectionStrategy[ChangeDetectionStrategy.Default] = "Default";
-        ? node.expression
-        // Ex: FooClass = __decorate([Component()], FooClass);
-        : node;
+      const leftExpression =
+        ts.isPropertyAccessExpression(node) || ts.isElementAccessExpression(node)
+          ? // Static Properties // Ex: Foo.bar = 'value';
+            // ENUM Property // Ex:  ChangeDetectionStrategy[ChangeDetectionStrategy.Default] = "Default";
+            node.expression
+          : // Ex: FooClass = __decorate([Component()], FooClass);
+            node;
 
       if (ts.isIdentifier(leftExpression) && leftExpression.text === name) {
         count++;
@@ -377,23 +345,28 @@ function findStatements(
 }
 
 function updateEnumIife(
+  nodeFactory: ts.NodeFactory,
   hostNode: ts.VariableStatement,
   iife: ts.CallExpression,
   exportAssignment?: ts.Expression,
 ): ts.Statement[] {
-  if (!ts.isParenthesizedExpression(iife.expression)
-      || !ts.isFunctionExpression(iife.expression.expression)) {
+  if (
+    !ts.isParenthesizedExpression(iife.expression) ||
+    !ts.isFunctionExpression(iife.expression.expression)
+  ) {
     throw new Error('Invalid IIFE Structure');
   }
 
   // Ignore export assignment if variable is directly exported
-  if (hostNode.modifiers
-      && hostNode.modifiers.findIndex(m => m.kind == ts.SyntaxKind.ExportKeyword) != -1) {
+  if (
+    hostNode.modifiers &&
+    hostNode.modifiers.findIndex((m) => m.kind == ts.SyntaxKind.ExportKeyword) != -1
+  ) {
     exportAssignment = undefined;
   }
 
   const expression = iife.expression.expression;
-  const updatedFunction = ts.updateFunctionExpression(
+  const updatedFunction = nodeFactory.updateFunctionExpression(
     expression,
     expression.modifiers,
     expression.asteriskToken,
@@ -401,74 +374,37 @@ function updateEnumIife(
     expression.typeParameters,
     expression.parameters,
     expression.type,
-    ts.updateBlock(
-      expression.body,
-      [
-        ...expression.body.statements,
-        ts.createReturn(expression.parameters[0].name as ts.Identifier),
-      ],
-    ),
+    nodeFactory.updateBlock(expression.body, [
+      ...expression.body.statements,
+      nodeFactory.createReturnStatement(expression.parameters[0].name as ts.Identifier),
+    ]),
   );
 
-  let arg: ts.Expression = ts.createObjectLiteral();
+  let arg: ts.Expression = nodeFactory.createObjectLiteralExpression();
   if (exportAssignment) {
-    arg = ts.createBinary(exportAssignment, ts.SyntaxKind.BarBarToken, arg);
+    arg = nodeFactory.createBinaryExpression(exportAssignment, ts.SyntaxKind.BarBarToken, arg);
   }
-  const updatedIife = ts.updateCall(
+  const updatedIife = nodeFactory.updateCallExpression(
     iife,
-    ts.updateParen(
-      iife.expression,
-      updatedFunction,
-    ),
+    nodeFactory.updateParenthesizedExpression(iife.expression, updatedFunction),
     iife.typeArguments,
     [arg],
   );
 
   let value: ts.Expression = addPureComment(updatedIife);
   if (exportAssignment) {
-    value = ts.createBinary(
+    value = nodeFactory.createBinaryExpression(
       exportAssignment,
       ts.SyntaxKind.FirstAssignment,
-      updatedIife);
+      updatedIife,
+    );
   }
 
-  return [updateHostNode(hostNode, value)];
-}
-
-function createWrappedEnum(
-  name: string,
-  hostNode: ts.VariableStatement,
-  statements: Array<ts.Statement>,
-  literalInitializer: ts.ObjectLiteralExpression = ts.createObjectLiteral(),
-  addExportModifier = false,
-): ts.Statement[] {
-  const node = addExportModifier
-    ? ts.updateVariableStatement(
-      hostNode,
-      [ts.createToken(ts.SyntaxKind.ExportKeyword)],
-      hostNode.declarationList,
-    )
-    : hostNode;
-
-  const innerVarStmt = ts.createVariableStatement(
-    undefined,
-    ts.createVariableDeclarationList([
-      ts.createVariableDeclaration(name, undefined, literalInitializer),
-    ]),
-  );
-
-  const innerReturn = ts.createReturn(ts.createIdentifier(name));
-
-  const iife = ts.createImmediatelyInvokedFunctionExpression([
-    innerVarStmt,
-    ...statements,
-    innerReturn,
-  ]);
-
-  return [updateHostNode(node, addPureComment(ts.createParen(iife)))];
+  return [updateHostNode(nodeFactory, hostNode, value)];
 }
 
 function createWrappedClass(
+  nodeFactory: ts.NodeFactory,
   hostNode: ts.ClassDeclaration | ts.VariableDeclaration,
   statements: ts.Statement[],
 ): ts.Statement[] {
@@ -477,7 +413,7 @@ function createWrappedClass(
   const updatedStatements = [...statements];
 
   if (ts.isClassDeclaration(hostNode)) {
-    updatedStatements[0] = ts.createClassDeclaration(
+    updatedStatements[0] = nodeFactory.createClassDeclaration(
       hostNode.decorators,
       undefined,
       hostNode.name,
@@ -488,35 +424,35 @@ function createWrappedClass(
   }
 
   const pureIife = addPureComment(
-    ts.createImmediatelyInvokedArrowFunction([
+    nodeFactory.createImmediatelyInvokedArrowFunction([
       ...updatedStatements,
-      ts.createReturn(ts.createIdentifier(name)),
+      nodeFactory.createReturnStatement(nodeFactory.createIdentifier(name)),
     ]),
   );
 
   const modifiers = hostNode.modifiers;
-  const isDefault = !!modifiers
-    && modifiers.some(x => x.kind === ts.SyntaxKind.DefaultKeyword);
+  const isDefault = !!modifiers && modifiers.some((x) => x.kind === ts.SyntaxKind.DefaultKeyword);
 
   const newStatement: ts.Statement[] = [];
   newStatement.push(
-    ts.createVariableStatement(
+    nodeFactory.createVariableStatement(
       isDefault ? undefined : modifiers,
-      ts.createVariableDeclarationList([
-        ts.createVariableDeclaration(name, undefined, pureIife),
-      ],
+      nodeFactory.createVariableDeclarationList(
+        [nodeFactory.createVariableDeclaration(name, undefined, undefined, pureIife)],
         ts.NodeFlags.Let,
       ),
-    ));
+    ),
+  );
 
   if (isDefault) {
     newStatement.push(
-      ts.createExportAssignment(
+      nodeFactory.createExportAssignment(
         undefined,
         undefined,
         false,
-        ts.createIdentifier(name),
-      ));
+        nodeFactory.createIdentifier(name),
+      ),
+    );
   }
 
   return newStatement;

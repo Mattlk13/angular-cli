@@ -15,12 +15,12 @@ export default async function() {
     // Install the CLI with TTY force enabled
     const execution = execWithEnv(
       'npm',
-      ['install', '@angular/cli', '--registry=http://localhost:4873'],
+      ['install', '@angular/cli'],
       { ...process.env, 'NG_FORCE_TTY': '1' },
     );
 
     // Check if the prompt is shown
-    await waitForAnyProcessOutputToMatch(/Would you like to share anonymous usage data/);
+    await waitForAnyProcessOutputToMatch(/Would you like to share anonymous usage data/, 60000);
 
   } finally {
     killAllProcesses();

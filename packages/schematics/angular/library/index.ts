@@ -1,11 +1,12 @@
 /**
  * @license
- * Copyright Google Inc. All Rights Reserved.
+ * Copyright Google LLC All Rights Reserved.
  *
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
-import { JsonParseMode, join, normalize, parseJson, strings } from '@angular-devkit/core';
+
+import { join, normalize, strings } from '@angular-devkit/core';
 import {
   Rule,
   SchematicContext,
@@ -22,54 +23,25 @@ import {
 } from '@angular-devkit/schematics';
 import { NodePackageInstallTask } from '@angular-devkit/schematics/tasks';
 import { NodeDependencyType, addPackageJsonDependency } from '../utility/dependencies';
+import { JSONFile } from '../utility/json-file';
 import { latestVersions } from '../utility/latest-versions';
 import { applyLintFix } from '../utility/lint-fix';
 import { relativePathToWorkspaceRoot } from '../utility/paths';
-import { addTsConfigProjectReferences, verifyBaseTsConfigExists } from '../utility/tsconfig';
 import { validateProjectName } from '../utility/validation';
 import { getWorkspace, updateWorkspace } from '../utility/workspace';
 import { Builders, ProjectType } from '../utility/workspace-models';
 import { Schema as LibraryOptions } from './schema';
 
-interface UpdateJsonFn<T> {
-  (obj: T): T | void;
-}
-
-type TsConfigPartialType = {
-  compilerOptions: {
-    baseUrl: string,
-    paths: {
-      [key: string]: string[];
-    },
-  },
-};
-
-function updateJsonFile<T>(host: Tree, path: string, callback: UpdateJsonFn<T>): Tree {
-  const source = host.read(path);
-  if (source) {
-    const sourceText = source.toString('utf-8');
-    const json = parseJson(sourceText, JsonParseMode.Loose);
-    callback(json as {} as T);
-    host.overwrite(path, JSON.stringify(json, null, 2));
-  }
-
-  return host;
-}
-
 function updateTsConfig(packageName: string, ...paths: string[]) {
-
   return (host: Tree) => {
-    if (!host.exists('tsconfig.base.json')) { return host; }
+    if (!host.exists('tsconfig.json')) {
+      return host;
+    }
 
-    return updateJsonFile(host, 'tsconfig.base.json', (tsconfig: TsConfigPartialType) => {
-      if (!tsconfig.compilerOptions.paths) {
-        tsconfig.compilerOptions.paths = {};
-      }
-      if (!tsconfig.compilerOptions.paths[packageName]) {
-        tsconfig.compilerOptions.paths[packageName] = [];
-      }
-      tsconfig.compilerOptions.paths[packageName].push(...paths);
-    });
+    const file = new JSONFile(host, 'tsconfig.json');
+    const jsonPath = ['compilerOptions', 'paths', packageName];
+    const value = file.get(jsonPath);
+    file.modify(jsonPath, Array.isArray(value) ? [...value, ...paths] : paths);
   };
 }
 
@@ -80,11 +52,6 @@ function addDependenciesToPackageJson() {
         type: NodeDependencyType.Dev,
         name: '@angular/compiler-cli',
         version: latestVersions.Angular,
-      },
-      {
-        type: NodeDependencyType.Dev,
-        name: '@angular-devkit/build-ng-packagr',
-        version: latestVersions.DevkitBuildNgPackagr,
       },
       {
         type: NodeDependencyType.Dev,
@@ -106,7 +73,7 @@ function addDependenciesToPackageJson() {
         name: 'typescript',
         version: latestVersions.TypeScript,
       },
-    ].forEach(dependency => addPackageJsonDependency(host, dependency));
+    ].forEach((dependency) => addPackageJsonDependency(host, dependency));
 
     return host;
   };
@@ -117,7 +84,7 @@ function addLibToWorkspaceFile(
   projectRoot: string,
   projectName: string,
 ): Rule {
-  return updateWorkspace(workspace => {
+  return updateWorkspace((workspace) => {
     if (workspace.projects.size === 0) {
       workspace.extensions.defaultProject = projectName;
     }
@@ -131,13 +98,16 @@ function addLibToWorkspaceFile(
       targets: {
         build: {
           builder: Builders.NgPackagr,
+          defaultConfiguration: 'production',
           options: {
-            tsConfig: `${projectRoot}/tsconfig.lib.json`,
             project: `${projectRoot}/ng-package.json`,
           },
           configurations: {
             production: {
               tsConfig: `${projectRoot}/tsconfig.lib.prod.json`,
+            },
+            development: {
+              tsConfig: `${projectRoot}/tsconfig.lib.json`,
             },
           },
         },
@@ -147,18 +117,6 @@ function addLibToWorkspaceFile(
             main: `${projectRoot}/src/test.ts`,
             tsConfig: `${projectRoot}/tsconfig.spec.json`,
             karmaConfig: `${projectRoot}/karma.conf.js`,
-          },
-        },
-        lint: {
-          builder: Builders.TsLint,
-          options: {
-            tsConfig: [
-              `${projectRoot}/tsconfig.lib.json`,
-              `${projectRoot}/tsconfig.spec.json`,
-            ],
-            exclude: [
-              '**/node_modules/**',
-            ],
           },
         },
       },
@@ -174,7 +132,6 @@ export default function (options: LibraryOptions): Rule {
     const prefix = options.prefix;
 
     validateProjectName(options.name);
-    verifyBaseTsConfigExists(host);
 
     // If scoped project (i.e. "@foo/bar"), convert projectDir to "foo/bar".
     const projectName = options.name;
@@ -187,7 +144,7 @@ export default function (options: LibraryOptions): Rule {
     }
 
     const workspace = await getWorkspace(host);
-    const newProjectRoot = workspace.extensions.newProjectRoot as (string | undefined) || '';
+    const newProjectRoot = (workspace.extensions.newProjectRoot as string | undefined) || '';
 
     const scopeFolder = scopeName ? strings.dasherize(scopeName) + '/' : '';
     const folderName = `${scopeFolder}${strings.dasherize(options.name)}`;
@@ -222,7 +179,7 @@ export default function (options: LibraryOptions): Rule {
         commonModule: false,
         flat: true,
         path: sourceDir,
-        project: options.name,
+        project: projectName,
       }),
       schematic('component', {
         name: options.name,
@@ -232,18 +189,14 @@ export default function (options: LibraryOptions): Rule {
         flat: true,
         path: sourceDir,
         export: true,
-        project: options.name,
+        project: projectName,
       }),
       schematic('service', {
         name: options.name,
         flat: true,
         path: sourceDir,
-        project: options.name,
+        project: projectName,
       }),
-      addTsConfigProjectReferences([
-        `${projectRoot}/tsconfig.lib.json`,
-        `${projectRoot}/tsconfig.spec.json`,
-      ]),
       options.lintFix ? applyLintFix(sourceDir) : noop(),
       (_tree: Tree, context: SchematicContext) => {
         if (!options.skipPackageJson && !options.skipInstall) {

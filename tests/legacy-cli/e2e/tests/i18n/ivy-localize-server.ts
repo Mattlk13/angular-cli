@@ -1,11 +1,12 @@
-import * as express from 'express';
+import express from 'express';
 import { join } from 'path';
 import { getGlobalVariable } from '../../utils/env';
 import { appendToFile, expectFileToMatch, writeFile } from '../../utils/fs';
-import { ng, silentNpm } from '../../utils/process';
+import { installWorkspacePackages } from '../../utils/packages';
+import { ng } from '../../utils/process';
 import { updateJsonFile } from '../../utils/project';
 import { expectToFail } from '../../utils/utils';
-import { langTranslations, setupI18nConfig } from './legacy';
+import { langTranslations, setupI18nConfig } from './setup';
 
 const snapshots = require('../../ng-snapshot/package.json');
 
@@ -21,19 +22,19 @@ export default async function () {
   await ng('add', '@nguniversal/express-engine@9.0.0-next.6', '--skip-install');
 
   if (isSnapshotBuild) {
-    await updateJsonFile('package.json', packageJson => {
+    await updateJsonFile('package.json', (packageJson) => {
       const dependencies = packageJson['dependencies'];
       dependencies['@angular/platform-server'] = snapshots.dependencies['@angular/platform-server'];
     });
   }
 
-  await silentNpm('install');
+  await installWorkspacePackages();
 
   const serverbaseDir = 'dist/test-project/server';
   const serverBuildArgs = ['run', 'test-project:server'];
 
   // Add server-specific config.
-  await updateJsonFile('angular.json', workspaceJson => {
+  await updateJsonFile('angular.json', (workspaceJson) => {
     const appProject = workspaceJson.projects['test-project'];
     const appArchitect = appProject.architect || appProject.targets;
     const serverOptions = appArchitect['server'].options;
@@ -109,7 +110,9 @@ export default async function () {
 
     // Run the server
     const serverBundle = join(process.cwd(), `${serverbaseDir}/${lang}/main.js`);
-    const { i18nApp } = await import(serverBundle) as { i18nApp(locale: string): express.Express };
+    const { i18nApp } = (await import(serverBundle)) as {
+      i18nApp(locale: string): express.Express;
+    };
     const server = i18nApp(lang).listen(4200, 'localhost');
     try {
       // Execute without a devserver.

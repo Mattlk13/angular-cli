@@ -1,16 +1,12 @@
 /**
  * @license
- * Copyright Google Inc. All Rights Reserved.
+ * Copyright Google LLC All Rights Reserved.
  *
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
 
 export * from './exception/exception';
-
- // Start experimental namespace
-export * from './experimental/workspace/index';
-// End experimental namespace
 
 // Start json namespace
 export * from './json/interface';
@@ -30,11 +26,6 @@ export * from './logger/logger';
 export * from './logger/null-logger';
 export * from './logger/transform-logger';
 // End logging namespace
-
-// Start terminal namespace
-export * from './terminal/text';
-export * from './terminal/colors';
-// End terminal namespace
 
 // Start utils namespace
 export * from './utils/literals';

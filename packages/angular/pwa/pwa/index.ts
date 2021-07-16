@@ -1,11 +1,11 @@
 /**
  * @license
- * Copyright Google Inc. All Rights Reserved.
+ * Copyright Google LLC All Rights Reserved.
  *
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
-import { getSystemPath, join, normalize } from '@angular-devkit/core';
+
 import {
   Rule,
   SchematicsException,
@@ -18,22 +18,21 @@ import {
   template,
   url,
 } from '@angular-devkit/schematics';
+import { getWorkspace, updateWorkspace } from '@schematics/angular/utility/workspace';
+import { posix } from 'path';
 import { Readable, Writable } from 'stream';
 import { Schema as PwaOptions } from './schema';
 
-const RewritingStream = require('parse5-html-rewriting-stream');
-
 function updateIndexFile(path: string): Rule {
-  return (host: Tree) => {
+  return async (host: Tree) => {
     const buffer = host.read(path);
     if (buffer === null) {
       throw new SchematicsException(`Could not read index file: ${path}`);
     }
 
-    const rewriter = new RewritingStream();
-
+    const rewriter = new (await import('parse5-html-rewriting-stream')).default();
     let needsNoScript = true;
-    rewriter.on('startTag', (startTag: { tagName: string }) => {
+    rewriter.on('startTag', (startTag) => {
       if (startTag.tagName === 'noscript') {
         needsNoScript = false;
       }
@@ -41,7 +40,7 @@ function updateIndexFile(path: string): Rule {
       rewriter.emitStartTag(startTag);
     });
 
-    rewriter.on('endTag', (endTag: { tagName: string }) => {
+    rewriter.on('endTag', (endTag) => {
       if (endTag.tagName === 'head') {
         rewriter.emitRaw('  <link rel="manifest" href="manifest.webmanifest">\n');
         rewriter.emitRaw('  <meta name="theme-color" content="#1976d2">\n');
@@ -54,7 +53,7 @@ function updateIndexFile(path: string): Rule {
       rewriter.emitEndTag(endTag);
     });
 
-    return new Promise<void>(resolve => {
+    return new Promise<void>((resolve) => {
       const input = new Readable({
         encoding: 'utf8',
         read(): void {
@@ -65,7 +64,7 @@ function updateIndexFile(path: string): Rule {
 
       const chunks: Array<Buffer> = [];
       const output = new Writable({
-        write(chunk: string | Buffer, encoding: string, callback: Function): void {
+        write(chunk: string | Buffer, encoding: BufferEncoding, callback: Function): void {
           chunks.push(typeof chunk === 'string' ? Buffer.from(chunk, encoding) : chunk);
           callback();
         },
@@ -82,14 +81,11 @@ function updateIndexFile(path: string): Rule {
   };
 }
 
-export default function(options: PwaOptions): Rule {
-  return async host => {
+export default function (options: PwaOptions): Rule {
+  return async (host) => {
     if (!options.title) {
       options.title = options.project;
     }
-
-    // Keep Bazel from failing due to deep import
-    const { getWorkspace, updateWorkspace } = require('@schematics/angular/utility/workspace');
 
     const workspace = await getWorkspace(host);
 
@@ -122,7 +118,10 @@ export default function(options: PwaOptions): Rule {
     }
 
     // Add manifest to asset configuration
-    const assetEntry = join(normalize(project.root), 'src', 'manifest.webmanifest');
+    const assetEntry = posix.join(
+      project.sourceRoot ?? posix.join(project.root, 'src'),
+      'manifest.webmanifest',
+    );
     for (const target of [...buildTargets, ...testTargets]) {
       if (target.options) {
         if (Array.isArray(target.options.assets)) {
@@ -138,44 +137,38 @@ export default function(options: PwaOptions): Rule {
     // Find all index.html files in build targets
     const indexFiles = new Set<string>();
     for (const target of buildTargets) {
-      if (target.options && typeof target.options.index === 'string') {
+      if (typeof target.options?.index === 'string') {
         indexFiles.add(target.options.index);
       }
 
       if (!target.configurations) {
         continue;
       }
-      for (const configName in target.configurations) {
-        const configuration = target.configurations[configName];
-        if (configuration && typeof configuration.index === 'string') {
-          indexFiles.add(configuration.index);
+
+      for (const options of Object.values(target.configurations)) {
+        if (typeof options?.index === 'string') {
+          indexFiles.add(options.index);
         }
       }
     }
 
     // Setup sources for the assets files to add to the project
-    const sourcePath = join(normalize(project.root), 'src');
-    const assetsPath = join(sourcePath, 'assets');
-    const rootTemplateSource = apply(url('./files/root'), [
-      template({ ...options }),
-      move(getSystemPath(sourcePath)),
-    ]);
-    const assetsTemplateSource = apply(url('./files/assets'), [
-      template({ ...options }),
-      move(getSystemPath(assetsPath)),
-    ]);
+    const sourcePath = project.sourceRoot ?? posix.join(project.root, 'src');
 
     // Setup service worker schematic options
-    const swOptions = { ...options };
-    delete swOptions.title;
+    const { title, ...swOptions } = options;
 
-    // Chain the rules and return
     return chain([
       updateWorkspace(workspace),
       externalSchematic('@schematics/angular', 'service-worker', swOptions),
-      mergeWith(rootTemplateSource),
-      mergeWith(assetsTemplateSource),
-      ...[...indexFiles].map(path => updateIndexFile(path)),
+      mergeWith(apply(url('./files/root'), [template({ ...options }), move(sourcePath)])),
+      mergeWith(
+        apply(url('./files/assets'), [
+          template({ ...options }),
+          move(posix.join(sourcePath, 'assets')),
+        ]),
+      ),
+      ...[...indexFiles].map((path) => updateIndexFile(path)),
     ]);
   };
 }

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * @license
- * Copyright Google Inc. All Rights Reserved.
+ * Copyright Google LLC All Rights Reserved.
  *
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
@@ -9,27 +9,13 @@
 
 // symbol polyfill must go first
 import 'symbol-observable';
-// tslint:disable-next-line:ordered-imports import-groups
-import {
-  JsonObject,
-  logging,
-  normalize,
-  schema,
-  tags,
-  terminal,
-  virtualFs,
-} from '@angular-devkit/core';
-import { NodeJsSyncHost, ProcessOutput, createConsoleLogger } from '@angular-devkit/core/node';
-import {
-  DryRunEvent,
-  SchematicEngine,
-  UnsuccessfulWorkflowExecution,
-  formats,
-} from '@angular-devkit/schematics';
-import { NodeModulesEngineHost, NodeWorkflow, validateOptionsWithSchema } from '@angular-devkit/schematics/tools';
+import { logging, schema, tags } from '@angular-devkit/core';
+import { ProcessOutput, createConsoleLogger } from '@angular-devkit/core/node';
+import { UnsuccessfulWorkflowExecution } from '@angular-devkit/schematics';
+import { NodeWorkflow } from '@angular-devkit/schematics/tools';
+import * as ansiColors from 'ansi-colors';
 import * as inquirer from 'inquirer';
-import * as minimist from 'minimist';
-
+import minimist from 'minimist';
 
 /**
  * Parse the name of schematic passed in argument, and return a {collection, schematic} named
@@ -38,24 +24,26 @@ import * as minimist from 'minimist';
  * and show usage.
  *
  * In the case where a collection name isn't part of the argument, the default is to use the
- * schematics package (@schematics/schematics) as the collection.
+ * schematics package (@angular-devkit/schematics-cli) as the collection.
  *
  * This logic is entirely up to the tooling.
  *
  * @param str The argument to parse.
  * @return {{collection: string, schematic: (string)}}
  */
-function parseSchematicName(str: string | null): { collection: string, schematic: string | null } {
-  let collection = '@schematics/schematics';
+function parseSchematicName(str: string | null): { collection: string; schematic: string | null } {
+  let collection = '@angular-devkit/schematics-cli';
 
   let schematic = str;
   if (schematic && schematic.indexOf(':') != -1) {
-    [collection, schematic] = schematic.split(':', 2);
+    [collection, schematic] = [
+      schematic.slice(0, schematic.lastIndexOf(':')),
+      schematic.substring(schematic.lastIndexOf(':') + 1),
+    ];
   }
 
   return { collection, schematic };
 }
-
 
 export interface MainOptions {
   args: string[];
@@ -63,13 +51,10 @@ export interface MainOptions {
   stderr?: ProcessOutput;
 }
 
-
-function _listSchematics(collectionName: string, logger: logging.Logger) {
+function _listSchematics(workflow: NodeWorkflow, collectionName: string, logger: logging.Logger) {
   try {
-    const engineHost = new NodeModulesEngineHost();
-    const engine = new SchematicEngine(engineHost);
-    const collection = engine.createCollection(collectionName);
-    logger.info(engine.listSchematicNames(collection).join('\n'));
+    const collection = workflow.engine.createCollection(collectionName);
+    logger.info(collection.listSchematicNames().join('\n'));
   } catch (error) {
     logger.fatal(error.message);
 
@@ -80,8 +65,8 @@ function _listSchematics(collectionName: string, logger: logging.Logger) {
 }
 
 function _createPromptProvider(): schema.PromptProvider {
-  return (definitions: Array<schema.PromptDefinition>) => {
-    const questions: inquirer.Questions = definitions.map(definition => {
+  return (definitions) => {
+    const questions: inquirer.QuestionCollection = definitions.map((definition) => {
       const question: inquirer.Question = {
         name: definition.id,
         message: definition.message,
@@ -90,7 +75,7 @@ function _createPromptProvider(): schema.PromptProvider {
 
       const validator = definition.validator;
       if (validator) {
-        question.validate = input => validator(input);
+        question.validate = (input) => validator(input);
       }
 
       switch (definition.type) {
@@ -99,17 +84,19 @@ function _createPromptProvider(): schema.PromptProvider {
         case 'list':
           return {
             ...question,
-            type: !!definition.multiselect ? 'checkbox' : 'list',
-            choices: definition.items && definition.items.map(item => {
-              if (typeof item == 'string') {
-                return item;
-              } else {
-                return {
-                  name: item.label,
-                  value: item.value,
-                };
-              }
-            }),
+            type: definition.multiselect ? 'checkbox' : 'list',
+            choices:
+              definition.items &&
+              definition.items.map((item) => {
+                if (typeof item == 'string') {
+                  return item;
+                } else {
+                  return {
+                    name: item.label,
+                    value: item.value,
+                  };
+                }
+              }),
           };
         default:
           return { ...question, type: definition.type };
@@ -127,8 +114,19 @@ export async function main({
 }: MainOptions): Promise<0 | 1> {
   const argv = parseArgs(args);
 
+  // Create a separate instance to prevent unintended global changes to the color configuration
+  // Create function is not defined in the typings. See: https://github.com/doowb/ansi-colors/pull/44
+  const colors = (ansiColors as typeof ansiColors & { create: () => typeof ansiColors }).create();
+
   /** Create the DevKit Logger used through the CLI. */
-  const logger = createConsoleLogger(argv['verbose'], stdout, stderr);
+  const logger = createConsoleLogger(argv['verbose'], stdout, stderr, {
+    info: (s) => s,
+    debug: (s) => s,
+    warn: (s) => colors.bold.yellow(s),
+    error: (s) => colors.bold.red(s),
+    fatal: (s) => colors.bold.red(s),
+  });
+
   if (argv.help) {
     logger.info(getUsage());
 
@@ -136,22 +134,11 @@ export async function main({
   }
 
   /** Get the collection an schematic name from the first argument. */
-  const {
-    collection: collectionName,
-    schematic: schematicName,
-  } = parseSchematicName(argv._.shift() || null);
+  const { collection: collectionName, schematic: schematicName } = parseSchematicName(
+    argv._.shift() || null,
+  );
+
   const isLocalCollection = collectionName.startsWith('.') || collectionName.startsWith('/');
-
-  /** If the user wants to list schematics, we simply show all the schematic names. */
-  if (argv['list-schematics']) {
-    return _listSchematics(collectionName, logger);
-  }
-
-  if (!schematicName) {
-    logger.info(getUsage());
-
-    return 1;
-  }
 
   /** Gather the arguments for later use. */
   const debug: boolean = argv.debug === null ? isLocalCollection : argv.debug;
@@ -159,20 +146,24 @@ export async function main({
   const force = argv['force'];
   const allowPrivate = argv['allow-private'];
 
-  /** Create a Virtual FS Host scoped to where the process is being run. **/
-  const fsHost = new virtualFs.ScopedHost(new NodeJsSyncHost(), normalize(process.cwd()));
-  const registry = new schema.CoreSchemaRegistry(formats.standardFormats);
-
-  /** Create the workflow that will be executed with this run. */
-  const workflow = new NodeWorkflow(fsHost, {
+  /** Create the workflow scoped to the working directory that will be executed with this run. */
+  const workflow = new NodeWorkflow(process.cwd(), {
     force,
     dryRun,
-    registry,
     resolvePaths: [process.cwd(), __dirname],
+    schemaValidation: true,
   });
 
-  registry.addPostTransform(schema.transforms.addUndefinedDefaults);
-  workflow.engineHost.registerOptionsTransform(validateOptionsWithSchema(registry));
+  /** If the user wants to list schematics, we simply show all the schematic names. */
+  if (argv['list-schematics']) {
+    return _listSchematics(workflow, collectionName, logger);
+  }
+
+  if (!schematicName) {
+    logger.info(getUsage());
+
+    return 1;
+  }
 
   // Indicate to the user when nothing has been done. This is automatically set to off when there's
   // a new DryRunEvent.
@@ -193,7 +184,7 @@ export async function main({
    *
    * This is a simple way to only show errors when an error occur.
    */
-  workflow.reporter.subscribe((event: DryRunEvent) => {
+  workflow.reporter.subscribe((event) => {
     nothingDone = false;
     // Strip leading slash to prevent confusion.
     const eventPath = event.path.startsWith('/') ? event.path.substr(1) : event.path;
@@ -206,34 +197,29 @@ export async function main({
         logger.error(`ERROR! ${eventPath} ${desc}.`);
         break;
       case 'update':
-        loggingQueue.push(tags.oneLine`
-        ${terminal.white('UPDATE')} ${eventPath} (${event.content.length} bytes)
-      `);
+        loggingQueue.push(`${colors.cyan('UPDATE')} ${eventPath} (${event.content.length} bytes)`);
         break;
       case 'create':
-        loggingQueue.push(tags.oneLine`
-        ${terminal.green('CREATE')} ${eventPath} (${event.content.length} bytes)
-      `);
+        loggingQueue.push(`${colors.green('CREATE')} ${eventPath} (${event.content.length} bytes)`);
         break;
       case 'delete':
-        loggingQueue.push(`${terminal.yellow('DELETE')} ${eventPath}`);
+        loggingQueue.push(`${colors.yellow('DELETE')} ${eventPath}`);
         break;
       case 'rename':
         const eventToPath = event.to.startsWith('/') ? event.to.substr(1) : event.to;
-        loggingQueue.push(`${terminal.blue('RENAME')} ${eventPath} => ${eventToPath}`);
+        loggingQueue.push(`${colors.blue('RENAME')} ${eventPath} => ${eventToPath}`);
         break;
     }
   });
 
-
   /**
    * Listen to lifecycle events of the workflow to flush the logs between each phases.
    */
-  workflow.lifeCycle.subscribe(event => {
+  workflow.lifeCycle.subscribe((event) => {
     if (event.kind == 'workflow-end' || event.kind == 'post-tasks-start') {
       if (!error) {
         // Flush the log queue and clean the error state.
-        loggingQueue.forEach(log => logger.info(log));
+        loggingQueue.forEach((log) => logger.info(log));
       }
 
       loggingQueue = [];
@@ -241,11 +227,10 @@ export async function main({
     }
   });
 
-
   /**
    * Remove every options from argv that we support in schematics itself.
    */
-  const parsedArgs = Object.assign({}, argv);
+  const parsedArgs = Object.assign({}, argv) as Record<string, unknown>;
   delete parsedArgs['--'];
   for (const key of booleanArgs) {
     delete parsedArgs[key];
@@ -259,19 +244,24 @@ export async function main({
     parsedArgs[key] = argv2[key];
   }
 
+  // Show usage of deprecated options
+  workflow.registry.useXDeprecatedProvider((msg) => logger.warn(msg));
+
   // Pass the rest of the arguments as the smart default "argv". Then delete it.
-  workflow.registry.addSmartDefaultProvider('argv', (schema: JsonObject) => {
+  workflow.registry.addSmartDefaultProvider('argv', (schema) => {
     if ('index' in schema) {
       return argv._[Number(schema['index'])];
     } else {
       return argv._;
     }
   });
+
   delete parsedArgs._;
 
   // Add prompts.
-  workflow.registry.usePromptProvider(_createPromptProvider());
-
+  if (argv['interactive'] && isTTY()) {
+    workflow.registry.usePromptProvider(_createPromptProvider());
+  }
 
   /**
    *  Execute the workflow, which will report the dry run events, run the tasks, and complete
@@ -282,14 +272,15 @@ export async function main({
    *  when everything is done.
    */
   try {
-    await workflow.execute({
-      collection: collectionName,
-      schematic: schematicName,
-      options: parsedArgs,
-      allowPrivate: allowPrivate,
-      debug: debug,
-      logger: logger,
-    })
+    await workflow
+      .execute({
+        collection: collectionName,
+        schematic: schematicName,
+        options: parsedArgs,
+        allowPrivate: allowPrivate,
+        debug: debug,
+        logger: logger,
+      })
       .toPromise();
 
     if (nothingDone) {
@@ -297,7 +288,6 @@ export async function main({
     }
 
     return 0;
-
   } catch (err) {
     if (err instanceof UnsuccessfulWorkflowExecution) {
       // "See above" because we already printed the error.
@@ -312,7 +302,7 @@ export async function main({
   }
 }
 
- /**
+/**
  * Get usage of the CLI tool.
  */
 function getUsage(): string {
@@ -335,13 +325,15 @@ function getUsage(): string {
       --force             Force overwriting files that would otherwise be an error.
 
       --list-schematics   List all schematics from the collection, by name. A collection name
-                          should be suffixed by a colon. Example: '@schematics/schematics:'.
+                          should be suffixed by a colon. Example: '@angular-devkit/schematics-cli:'.
+
+      --no-interactive    Disables interactive input prompts.
 
       --verbose           Show more information.
 
       --help              Show this message.
 
-  Any additional option is passed to the Schematics depending on
+  Any additional option is passed to the Schematics depending on its schema.
   `;
 }
 
@@ -357,27 +349,46 @@ const booleanArgs = [
   'list-schematics',
   'listSchematics',
   'verbose',
+  'interactive',
 ];
 
 function parseArgs(args: string[] | undefined): minimist.ParsedArgs {
-    return minimist(args, {
-      boolean: booleanArgs,
-      alias: {
-        'dryRun': 'dry-run',
-        'listSchematics': 'list-schematics',
-        'allowPrivate': 'allow-private',
-      },
-      default: {
-        'debug': null,
-        'dryRun': null,
-      },
-      '--': true,
-    });
+  return minimist(args, {
+    boolean: booleanArgs,
+    alias: {
+      'dryRun': 'dry-run',
+      'listSchematics': 'list-schematics',
+      'allowPrivate': 'allow-private',
+    },
+    default: {
+      'interactive': true,
+      'debug': null,
+      'dryRun': null,
+    },
+    '--': true,
+  });
+}
+
+function isTTY(): boolean {
+  const isTruthy = (value: undefined | string) => {
+    // Returns true if value is a string that is anything but 0 or false.
+    return value !== undefined && value !== '0' && value.toUpperCase() !== 'FALSE';
+  };
+
+  // If we force TTY, we always return true.
+  const force = process.env['NG_FORCE_TTY'];
+  if (force !== undefined) {
+    return isTruthy(force);
+  }
+
+  return !!process.stdout.isTTY && !isTruthy(process.env['CI']);
 }
 
 if (require.main === module) {
   const args = process.argv.slice(2);
   main({ args })
-    .then(exitCode => process.exitCode = exitCode)
-    .catch(e => { throw (e); });
+    .then((exitCode) => (process.exitCode = exitCode))
+    .catch((e) => {
+      throw e;
+    });
 }

@@ -1,17 +1,16 @@
 /**
  * @license
- * Copyright Google Inc. All Rights Reserved.
+ * Copyright Google LLC All Rights Reserved.
  *
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
+
 import { dirname, join, normalize } from '@angular-devkit/core';
 import { Rule, Tree } from '@angular-devkit/schematics';
-import { appendPropertyInAstObject, findPropertyInAstObject, removePropertyInAstObject } from '../../utility/json-utils';
+import { JSONFile } from '../../utility/json-file';
 import { getWorkspace } from '../../utility/workspace';
 import { Builders } from '../../utility/workspace-models';
-import { readJsonFileAsAstObject } from '../update-9/utils';
-
 
 interface ModuleAndTargetReplamenent {
   oldModule?: string;
@@ -21,36 +20,55 @@ interface ModuleAndTargetReplamenent {
 }
 
 export default function (): Rule {
-  return async host => {
+  return async (host, { logger }) => {
     // Workspace level tsconfig
-    updateModuleAndTarget(host, 'tsconfig.json', {
-      oldModule: 'esnext',
-      newModule: 'es2020',
-    });
+    try {
+      updateModuleAndTarget(host, 'tsconfig.json', {
+        oldModule: 'esnext',
+        newModule: 'es2020',
+      });
+    } catch (error) {
+      logger.warn(
+        `Unable to update 'tsconfig.json' module option from 'esnext' to 'es2020': ${
+          error.message || error
+        }`,
+      );
+    }
 
     const workspace = await getWorkspace(host);
     // Find all tsconfig which are refereces used by builders
     for (const [, project] of workspace.projects) {
       for (const [, target] of project.targets) {
         // E2E builder doesn't reference a tsconfig but it uses one found in the root folder.
-        if (target.builder === Builders.Protractor && typeof target.options?.protractorConfig === 'string') {
-          const tsConfigPath = join(dirname(normalize(target.options.protractorConfig)), 'tsconfig.json');
+        if (
+          target.builder === Builders.Protractor &&
+          typeof target.options?.protractorConfig === 'string'
+        ) {
+          const tsConfigPath = join(
+            dirname(normalize(target.options.protractorConfig)),
+            'tsconfig.json',
+          );
 
-          updateModuleAndTarget(host, tsConfigPath, {
-            oldTarget: 'es5',
-            newTarget: 'es2018',
-          });
+          try {
+            updateModuleAndTarget(host, tsConfigPath, {
+              oldTarget: 'es5',
+              newTarget: 'es2018',
+            });
+          } catch (error) {
+            logger.warn(
+              `Unable to update '${tsConfigPath}' target option from 'es5' to 'es2018': ${
+                error.message || error
+              }`,
+            );
+          }
 
           continue;
         }
 
         // Update all other known CLI builders that use a tsconfig
-        const tsConfigs = [
-          target.options || {},
-          ...Object.values(target.configurations || {}),
-        ]
-          .filter(opt => typeof opt?.tsConfig === 'string')
-          .map(opt => (opt as { tsConfig: string }).tsConfig);
+        const tsConfigs = [target.options || {}, ...Object.values(target.configurations || {})]
+          .filter((opt) => typeof opt?.tsConfig === 'string')
+          .map((opt) => (opt as { tsConfig: string }).tsConfig);
 
         const uniqueTsConfigs = [...new Set(tsConfigs)];
 
@@ -60,28 +78,50 @@ export default function (): Rule {
 
         switch (target.builder as Builders) {
           case Builders.Server:
-            uniqueTsConfigs.forEach(p => {
-              updateModuleAndTarget(host, p, {
-                oldModule: 'commonjs',
-                // False will remove the module
-                // NB: For server we no longer use commonjs because it is bundled using webpack which has it's own module system.
-                // This ensures that lazy-loaded works on the server.
-                newModule: false,
-              });
+            uniqueTsConfigs.forEach((p) => {
+              try {
+                updateModuleAndTarget(host, p, {
+                  oldModule: 'commonjs',
+                  // False will remove the module
+                  // NB: For server we no longer use commonjs because it is bundled using webpack which has it's own module system.
+                  // This ensures that lazy-loaded works on the server.
+                  newModule: false,
+                });
+              } catch (error) {
+                logger.warn(
+                  `Unable to remove '${p}' module option (was 'commonjs'): ${
+                    error.message || error
+                  }`,
+                );
+              }
 
-              updateModuleAndTarget(host, p, {
-                newTarget: 'es2016',
-              });
+              try {
+                updateModuleAndTarget(host, p, {
+                  newTarget: 'es2016',
+                });
+              } catch (error) {
+                logger.warn(
+                  `Unable to update '${p}' target option to 'es2016': ${error.message || error}`,
+                );
+              }
             });
             break;
           case Builders.Karma:
           case Builders.Browser:
-          case Builders.NgPackagr:
-            uniqueTsConfigs.forEach(p => {
-              updateModuleAndTarget(host, p, {
-                oldModule: 'esnext',
-                newModule: 'es2020',
-              });
+          case Builders.DeprecatedNgPackagr:
+            uniqueTsConfigs.forEach((p) => {
+              try {
+                updateModuleAndTarget(host, p, {
+                  oldModule: 'esnext',
+                  newModule: 'es2020',
+                });
+              } catch (error) {
+                logger.warn(
+                  `Unable to update '${p}' module option from 'esnext' to 'es2020': ${
+                    error.message || error
+                  }`,
+                );
+              }
             });
             break;
         }
@@ -90,42 +130,31 @@ export default function (): Rule {
   };
 }
 
-function updateModuleAndTarget(host: Tree, tsConfigPath: string, replacements: ModuleAndTargetReplamenent) {
-  const jsonAst = readJsonFileAsAstObject(host, tsConfigPath);
-  if (!jsonAst) {
-    return;
-  }
-
-  const compilerOptionsAst = findPropertyInAstObject(jsonAst, 'compilerOptions');
-  if (compilerOptionsAst?.kind !== 'object') {
-    return;
-  }
+function updateModuleAndTarget(
+  host: Tree,
+  tsConfigPath: string,
+  replacements: ModuleAndTargetReplamenent,
+) {
+  const json = new JSONFile(host, tsConfigPath);
 
   const { oldTarget, newTarget, newModule, oldModule } = replacements;
-
-  const recorder = host.beginUpdate(tsConfigPath);
   if (newTarget) {
-    const targetAst = findPropertyInAstObject(compilerOptionsAst, 'target');
+    const target = json.get(['compilerOptions', 'target']);
 
-    if (!targetAst && !oldTarget) {
-      appendPropertyInAstObject(recorder, compilerOptionsAst, 'target', newTarget, 4);
-    } else if (targetAst?.kind === 'string' && (!oldTarget || oldTarget === targetAst.value.toLowerCase())) {
-      const offset = targetAst.start.offset + 1;
-      recorder.remove(offset, targetAst.value.length);
-      recorder.insertLeft(offset, newTarget);
+    if (
+      (typeof target === 'string' && (!oldTarget || oldTarget === target.toLowerCase())) ||
+      !target
+    ) {
+      json.modify(['compilerOptions', 'target'], newTarget);
     }
   }
 
   if (newModule === false) {
-    removePropertyInAstObject(recorder, compilerOptionsAst, 'module');
+    json.remove(['compilerOptions', 'module']);
   } else if (newModule) {
-    const moduleAst = findPropertyInAstObject(compilerOptionsAst, 'module');
-    if (moduleAst?.kind === 'string' && oldModule === moduleAst.value.toLowerCase()) {
-      const offset = moduleAst.start.offset + 1;
-      recorder.remove(offset, moduleAst.value.length);
-      recorder.insertLeft(offset, newModule);
+    const module = json.get(['compilerOptions', 'module']);
+    if (typeof module === 'string' && oldModule === module.toLowerCase()) {
+      json.modify(['compilerOptions', 'module'], newModule);
     }
   }
-
-  host.commitUpdate(recorder);
 }

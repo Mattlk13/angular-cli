@@ -1,17 +1,18 @@
 /**
  * @license
- * Copyright Google Inc. All Rights Reserved.
+ * Copyright Google LLC All Rights Reserved.
  *
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
+
+import * as cacache from 'cacache';
 import { createHash } from 'crypto';
 import * as fs from 'fs';
 import { copyFile } from './copy-file';
 import { allowMangle } from './environment-options';
 import { CacheKey, ProcessBundleOptions, ProcessBundleResult } from './process-bundle';
 
-const cacache = require('cacache');
 const packageVersion = require('../../package.json').version;
 
 export interface CacheEntry {
@@ -33,15 +34,19 @@ export class BundleActionCache {
     }
   }
 
+  generateIntegrityValue(content: string): string {
+    const algorithm = this.integrityAlgorithm || 'sha1';
+    const codeHash = createHash(algorithm).update(content).digest('base64');
+
+    return `${algorithm}-${codeHash}`;
+  }
+
   generateBaseCacheKey(content: string): string {
     // Create base cache key with elements:
     // * package version - different build-angular versions cause different final outputs
     // * code length/hash - ensure cached version matches the same input code
-    const algorithm = this.integrityAlgorithm || 'sha1';
-    const codeHash = createHash(algorithm)
-      .update(content)
-      .digest('base64');
-    let baseCacheKey = `${packageVersion}|${content.length}|${algorithm}-${codeHash}`;
+    const integrity = this.generateIntegrityValue(content);
+    let baseCacheKey = `${packageVersion}|${content.length}|${integrity}`;
     if (!allowMangle) {
       baseCacheKey += '|MD';
     }
@@ -57,7 +62,8 @@ export class BundleActionCache {
     // sourceMappingURL is added at the very end which causes the code to be the same when sourcemaps are enabled/disabled
     // When using hiddenSourceMaps we can omit the postfix since sourceMappingURL will not be added.
     // When having sourcemaps a hashed file and non hashed file can have the same content. But the sourceMappingURL will differ.
-    const sourceMapPostFix = action.sourceMaps && !action.hiddenSourceMaps ? `|sourcemap|${action.filename}` : '';
+    const sourceMapPostFix =
+      action.sourceMaps && !action.hiddenSourceMaps ? `|sourcemap|${action.filename}` : '';
 
     const baseCacheKey = this.generateBaseCacheKey(action.code);
 
@@ -98,7 +104,8 @@ export class BundleActionCache {
         }
         cacheEntries.push({
           path: entry.path,
-          size: entry.size,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          size: (entry as any).size,
           integrity: entry.metadata && entry.metadata.integrity,
         });
       } else {
@@ -110,12 +117,15 @@ export class BundleActionCache {
   }
 
   async getCachedBundleResult(action: ProcessBundleOptions): Promise<ProcessBundleResult | null> {
-    const entries = action.cacheKeys && await this.getCacheEntries(action.cacheKeys);
+    const entries = action.cacheKeys && (await this.getCacheEntries(action.cacheKeys));
     if (!entries) {
       return null;
     }
 
-    const result: ProcessBundleResult = { name: action.name };
+    const result: ProcessBundleResult = {
+      name: action.name,
+      integrity: this.generateIntegrityValue(action.code),
+    };
 
     let cacheEntry = entries[CacheKey.OriginalCode];
     if (cacheEntry) {

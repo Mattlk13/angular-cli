@@ -1,30 +1,42 @@
 /**
  * @license
- * Copyright Google Inc. All Rights Reserved.
+ * Copyright Google LLC All Rights Reserved.
  *
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
-import { JsonParseMode, isJsonObject, parseJson } from '@angular-devkit/core';
-import * as child_process from 'child_process';
-import * as fs from 'fs';
+
+import { execSync } from 'child_process';
 import * as path from 'path';
 import { Command } from '../models/command';
 import { colors } from '../utilities/color';
-import { findUp } from '../utilities/find-up';
+import { getPackageManager } from '../utilities/package-manager';
 import { Schema as VersionCommandSchema } from './version';
+
+/**
+ * Major versions of Node.js that are officially supported by Angular.
+ */
+const SUPPORTED_NODE_MAJORS = [12, 14];
+
+interface PartialPackageInfo {
+  name: string;
+  version: string;
+  dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
+}
 
 export class VersionCommand extends Command<VersionCommandSchema> {
   public static aliases = ['v'];
 
   async run() {
-    const pkg = require(path.resolve(__dirname, '..', 'package.json'));
-    let projPkg;
+    const cliPackage: PartialPackageInfo = require('../package.json');
+    let workspacePackage: PartialPackageInfo | undefined;
     try {
-      projPkg = require(path.resolve(this.workspace.root, 'package.json'));
-    } catch {
-      projPkg = undefined;
-    }
+      workspacePackage = require(path.resolve(this.context.root, 'package.json'));
+    } catch {}
+
+    const [nodeMajor] = process.versions.node.split('.').map((part) => Number(part));
+    const unsupportedNodeVersion = !SUPPORTED_NODE_MAJORS.includes(nodeMajor);
 
     const patterns = [
       /^@angular\/.*/,
@@ -39,66 +51,30 @@ export class VersionCommand extends Command<VersionCommandSchema> {
       /^webpack$/,
     ];
 
-    const maybeNodeModules = findUp('node_modules', __dirname);
-    const packageRoot = projPkg
-      ? path.resolve(this.workspace.root, 'node_modules')
-      : maybeNodeModules;
-
     const packageNames = [
-      ...Object.keys((pkg && pkg['dependencies']) || {}),
-      ...Object.keys((pkg && pkg['devDependencies']) || {}),
-      ...Object.keys((projPkg && projPkg['dependencies']) || {}),
-      ...Object.keys((projPkg && projPkg['devDependencies']) || {}),
+      ...Object.keys(cliPackage.dependencies || {}),
+      ...Object.keys(cliPackage.devDependencies || {}),
+      ...Object.keys(workspacePackage?.dependencies || {}),
+      ...Object.keys(workspacePackage?.devDependencies || {}),
     ];
 
-    if (packageRoot != null) {
-      // Add all node_modules and node_modules/@*/*
-      const nodePackageNames = fs.readdirSync(packageRoot).reduce<string[]>((acc, name) => {
-        if (name.startsWith('@')) {
-          return acc.concat(
-            fs.readdirSync(path.resolve(packageRoot, name)).map(subName => name + '/' + subName),
-          );
-        } else {
-          return acc.concat(name);
-        }
-      }, []);
-
-      packageNames.push(...nodePackageNames);
-    }
-
     const versions = packageNames
-      .filter(x => patterns.some(p => p.test(x)))
-      .reduce(
-        (acc, name) => {
-          if (name in acc) {
-            return acc;
-          }
-
-          acc[name] = this.getVersion(name, packageRoot, maybeNodeModules);
-
+      .filter((x) => patterns.some((p) => p.test(x)))
+      .reduce((acc, name) => {
+        if (name in acc) {
           return acc;
-        },
-        {} as { [module: string]: string },
-      );
+        }
 
-    let ngCliVersion = pkg.version;
-    if (!__dirname.match(/node_modules/)) {
-      let gitBranch = '??';
-      try {
-        const gitRefName = child_process.execSync('git rev-parse --abbrev-ref HEAD', {
-          cwd: __dirname,
-          encoding: 'utf8',
-          stdio: 'pipe',
-        });
-        gitBranch = gitRefName.replace('\n', '');
-      } catch {}
+        acc[name] = this.getVersion(name);
 
-      ngCliVersion = `local (v${pkg.version}, branch: ${gitBranch})`;
-    }
+        return acc;
+      }, {} as { [module: string]: string });
+
+    const ngCliVersion = cliPackage.version;
     let angularCoreVersion = '';
     const angularSameAsCore: string[] = [];
 
-    if (projPkg) {
+    if (workspacePackage) {
       // Filter all angular versions that are the same as core.
       angularCoreVersion = versions['@angular/core'];
       if (angularCoreVersion) {
@@ -129,14 +105,15 @@ export class VersionCommand extends Command<VersionCommandSchema> {
                 |___/
     `
       .split('\n')
-      .map(x => colors.red(x))
+      .map((x) => colors.red(x))
       .join('\n');
 
     this.logger.info(asciiArt);
     this.logger.info(
       `
       Angular CLI: ${ngCliVersion}
-      Node: ${process.versions.node}
+      Node: ${process.versions.node}${unsupportedNodeVersion ? ' (Unsupported)' : ''}
+      Package Manager: ${await this.getPackageManager()}
       OS: ${process.platform} ${process.arch}
 
       Angular: ${angularCoreVersion}
@@ -156,55 +133,67 @@ export class VersionCommand extends Command<VersionCommandSchema> {
           return acc;
         }, [])
         .join('\n... ')}
-      Ivy Workspace: ${projPkg ? this.getIvyWorkspace() : ''}
 
       Package${namePad.slice(7)}Version
       -------${namePad.replace(/ /g, '-')}------------------
       ${Object.keys(versions)
-        .map(module => `${module}${namePad.slice(module.length)}${versions[module]}`)
+        .map((module) => `${module}${namePad.slice(module.length)}${versions[module]}`)
         .sort()
         .join('\n')}
     `.replace(/^ {6}/gm, ''),
     );
+
+    if (unsupportedNodeVersion) {
+      this.logger.warn(
+        `Warning: The current version of Node (${process.versions.node}) is not supported by Angular.`,
+      );
+    }
   }
 
-  private getVersion(
-    moduleName: string,
-    projectNodeModules: string | null,
-    cliNodeModules: string | null,
-  ): string {
-    try {
-      if (projectNodeModules) {
-        const modulePkg = require(path.resolve(projectNodeModules, moduleName, 'package.json'));
+  private getVersion(moduleName: string): string {
+    let packagePath;
+    let cliOnly = false;
 
-        return modulePkg.version;
-      }
+    // Try to find the package in the workspace
+    try {
+      packagePath = require.resolve(`${moduleName}/package.json`, { paths: [this.context.root] });
     } catch {}
 
-    try {
-      if (cliNodeModules) {
-        const modulePkg = require(path.resolve(cliNodeModules, moduleName, 'package.json'));
+    // If not found, try to find within the CLI
+    if (!packagePath) {
+      try {
+        packagePath = require.resolve(`${moduleName}/package.json`);
+        cliOnly = true;
+      } catch {}
+    }
 
-        return modulePkg.version + ' (cli-only)';
-      }
-    } catch {}
+    let version: string | undefined;
 
-    return '<error>';
+    // If found, attempt to get the version
+    if (packagePath) {
+      try {
+        version = require(packagePath).version + (cliOnly ? ' (cli-only)' : '');
+      } catch {}
+    }
+
+    return version || '<error>';
   }
 
-  private getIvyWorkspace(): string {
+  private async getPackageManager(): Promise<string> {
     try {
-      const content = fs.readFileSync(path.resolve(this.workspace.root, 'tsconfig.base.json'), 'utf-8');
-      const tsConfig = parseJson(content, JsonParseMode.Loose);
-      if (!isJsonObject(tsConfig)) {
-        return '<error>';
-      }
+      const manager = await getPackageManager(this.context.root);
+      const version = execSync(`${manager} --version`, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        env: {
+          ...process.env,
+          //  NPM updater notifier will prevents the child process from closing until it timeout after 3 minutes.
+          NO_UPDATE_NOTIFIER: '1',
+          NPM_CONFIG_UPDATE_NOTIFIER: 'false',
+        },
+      }).trim();
 
-      const { angularCompilerOptions } = tsConfig;
-
-      return isJsonObject(angularCompilerOptions) && angularCompilerOptions.enableIvy === false
-        ? 'No'
-        : 'Yes';
+      return `${manager} ${version}`;
     } catch {
       return '<error>';
     }

@@ -26,8 +26,8 @@ should be tagged with tag `angular-cli` or `angular-devkit`.
 
 StackOverflow is a much better place to ask questions since:
 
-- there are thousands of people willing to help on StackOverflow
-- questions and answers stay available for public viewing so your question / answer might help someone else
+- There are thousands of people willing to help on StackOverflow.
+- Questions and answers stay available for public viewing so your question / answer might help someone else.
 - StackOverflow's voting system assures that the best answers are prominently visible.
 
 To save your and our time we will be systematically closing all the issues that are requests for
@@ -117,7 +117,7 @@ Before you submit your Pull Request (PR) consider the following guidelines:
     git rebase master -i
     git push -f
     ```
-  * Add the `PR action: merge` label and the correct
+  * Add the `action: merge` label and the correct
 [target label](https://github.com/angular/angular/blob/master/docs/TRIAGE_AND_LABELS.md#pr-target)
     (if PR author has the project collaborator status, or else the last reviewer
     should do this).
@@ -192,16 +192,15 @@ If the commit reverts a previous commit, it should begin with `revert: `, follow
 ### Type
 Must be one of the following:
 
-* **build**: Changes that affect the build system or external dependencies. [2]
-* **ci**: Changes to our CI configuration files and scripts. [2]
-* **docs**: Documentation only changes. 
-* **feat**: A new feature. [1]
-* **fix**: A bug fix. [1]
-* **refactor**: A code change that neither fixes a bug nor adds a feature 
-* **release**: A release commit. Must only include version changes. [2]
-* **revert**: A git commit revert. The description must include the original commit message. [2]
-* **style**: Changes that do not affect the meaning of the code (white-space, formatting, missing semi-colons, etc). 
-* **test**: Adding missing tests or correcting existing tests. 
+* **build**: Changes to local repository build system and tooling 
+* **ci**: Changes to CI configuration and CI specific tooling [2]
+* **docs**: Changes which exclusively affects documentation. 
+* **feat**: Creates a new feature [1]
+* **fix**: Fixes a previously discovered failure/bug [1]
+* **perf**: Improves performance without any change in functionality or API [1]
+* **refactor**: Refactor without any change in functionality or API (includes style changes) 
+* **release**: A release point in the repository [2]
+* **test**: Improvements or corrections made to the project's test suite 
 
 
 <sup>[1] This type MUST have a scope. See the next section for more information.</sup><br/>
@@ -216,8 +215,8 @@ The following is the list of supported scopes:
 * **@angular/pwa**
 * **@angular-devkit/architect**
 * **@angular-devkit/architect-cli**
+* **@angular-devkit/benchmark**
 * **@angular-devkit/build-angular**
-* **@angular-devkit/build-ng-packagr**
 * **@angular-devkit/build-optimizer**
 * **@angular-devkit/build-webpack**
 * **@angular-devkit/core**
@@ -225,8 +224,6 @@ The following is the list of supported scopes:
 * **@angular-devkit/schematics-cli**
 * **@ngtools/webpack**
 * **@schematics/angular**
-* **@schematics/schematics**
-* **@schematics/update**
 
 
 ### Subject
@@ -291,18 +288,18 @@ To test if your change effect the public API you need to run the API guardian on
 For example in case `@angular-devkit/core` package was modified you need to run:
 
 ```bash
-yarn bazel test //etc/api:angular_devkit_core_api
+yarn bazel test //goldens/public-api:angular_devkit_core_api
 ```
 
 You can also test all packages by running:
 ```bash
-yarn bazel test //etc/api ...
+yarn bazel test //goldens/public-api ...
 ```
 
 If you modified the public API, the test will fail. To update the golden files you need to run:
 
 ```bash
-yarn bazel run //etc/api:angular_devkit_core_api.accept
+yarn bazel run //goldens/public-api:angular_devkit_core_api.accept
 ```
 
 **Note**: In some cases we use aliased symbols to create namespaces.

@@ -1,10 +1,11 @@
 /**
  * @license
- * Copyright Google Inc. All Rights Reserved.
+ * Copyright Google LLC All Rights Reserved.
  *
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
+
 import { BuilderContext } from '@angular-devkit/architect';
 import { EmittedFiles } from '@angular-devkit/build-webpack';
 import * as fs from 'fs';
@@ -13,6 +14,7 @@ import { BundleActionExecutor } from './action-executor';
 import { copyAssets } from './copy-assets';
 import { I18nOptions } from './i18n-options';
 import { InlineOptions } from './process-bundle';
+import { Spinner } from './spinner';
 
 function emittedFilesToInlineOptions(
   emittedFiles: EmittedFiles[],
@@ -21,7 +23,7 @@ function emittedFilesToInlineOptions(
   outputPath: string,
   es5: boolean,
   missingTranslation: 'error' | 'warning' | 'ignore' | undefined,
-): { options: InlineOptions[]; originalFiles: string[] }  {
+): { options: InlineOptions[]; originalFiles: string[] } {
   const options: InlineOptions[] = [];
   const originalFiles: string[] = [];
   for (const emittedFile of emittedFiles) {
@@ -73,6 +75,9 @@ export async function i18nInlineEmittedFiles(
 ): Promise<boolean> {
   const executor = new BundleActionExecutor({ i18n });
   let hasErrors = false;
+  const spinner = new Spinner();
+  spinner.start('Generating localized bundles...');
+
   try {
     const { options, originalFiles: processedFiles } = emittedFilesToInlineOptions(
       emittedFiles,
@@ -85,12 +90,14 @@ export async function i18nInlineEmittedFiles(
 
     for await (const result of executor.inlineAll(options)) {
       for (const diagnostic of result.diagnostics) {
+        spinner.stop();
         if (diagnostic.type === 'error') {
           hasErrors = true;
           context.logger.error(diagnostic.message);
         } else {
           context.logger.warn(diagnostic.message);
         }
+        spinner.start();
       }
     }
 
@@ -101,14 +108,14 @@ export async function i18nInlineEmittedFiles(
           glob: '**/*',
           input: emittedPath,
           output: '',
-          ignore: [...processedFiles].map(f => path.relative(emittedPath, f)),
+          ignore: [...processedFiles].map((f) => path.relative(emittedPath, f)),
         },
       ],
       outputPaths,
       '',
     );
   } catch (err) {
-    context.logger.error('Localized bundle generation failed: ' + err.message);
+    spinner.fail('Localized bundle generation failed: ' + err.message);
 
     return false;
   } finally {
@@ -116,9 +123,9 @@ export async function i18nInlineEmittedFiles(
   }
 
   if (hasErrors) {
-    context.logger.error('Localized bundle generation failed.');
+    spinner.fail('Localized bundle generation failed.');
   } else {
-    context.logger.info('Localized bundle generation complete.');
+    spinner.succeed('Localized bundle generation complete.');
   }
 
   return !hasErrors;

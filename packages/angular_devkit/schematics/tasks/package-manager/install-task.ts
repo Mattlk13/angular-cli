@@ -1,19 +1,20 @@
 /**
  * @license
- * Copyright Google Inc. All Rights Reserved.
+ * Copyright Google LLC All Rights Reserved.
  *
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
+
 import { TaskConfiguration, TaskConfigurationGenerator } from '../../src';
 import { NodePackageName, NodePackageTaskOptions } from './options';
 
-export class NodePackageInstallTaskOptions {
-  packageManager: string;
-  packageName: string;
-  workingDirectory: string;
-  quiet: boolean;
-  hideOutput: boolean;
+interface NodePackageInstallTaskOptions {
+  packageManager?: string;
+  packageName?: string;
+  workingDirectory?: string;
+  quiet?: boolean;
+  hideOutput?: boolean;
 }
 
 export class NodePackageInstallTask implements TaskConfigurationGenerator<NodePackageTaskOptions> {
@@ -24,8 +25,8 @@ export class NodePackageInstallTask implements TaskConfigurationGenerator<NodePa
   packageName?: string;
 
   constructor(workingDirectory?: string);
-  constructor(options: Partial<NodePackageInstallTaskOptions>);
-  constructor(options?: string | Partial<NodePackageInstallTaskOptions>) {
+  constructor(options: NodePackageInstallTaskOptions);
+  constructor(options?: string | NodePackageInstallTaskOptions) {
     if (typeof options === 'string') {
       this.workingDirectory = options;
     } else if (typeof options === 'object') {

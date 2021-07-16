@@ -1,7 +1,6 @@
-import * as express from 'express';
+import express from 'express';
 import * as path from 'path';
 import { copyProjectAsset } from '../../utils/assets';
-import { getGlobalVariable } from '../../utils/env';
 import { replaceInFile } from '../../utils/fs';
 import { ng } from '../../utils/process';
 
@@ -15,22 +14,12 @@ export default async function () {
     throw new Error('SauceLabs is not configured.');
   }
 
-  await replaceInFile(
-    '.browserslistrc',
-    'not IE 9-11',
-    'IE 9-11',
-  );
+  await replaceInFile('.browserslistrc', 'not IE 11', 'IE 11');
 
-  if (!getGlobalVariable('argv')['ve']) {
-    // Workaround for https://github.com/angular/angular/issues/32192
-    await replaceInFile(
-      'src/app/app.component.html',
-      /class="material-icons"/g,
-      '',
-    );
-  }
+  // Workaround for https://github.com/angular/angular/issues/32192
+  await replaceInFile('src/app/app.component.html', /class="material-icons"/g, '');
 
-  await ng('build', '--prod');
+  await ng('build');
 
   // Add Protractor configuration
   await copyProjectAsset('protractor-saucelabs.conf.js', 'e2e/protractor-saucelabs.conf.js');
@@ -46,17 +35,7 @@ export default async function () {
   // Leading and trailing space is not removed
   await replaceInFile(
     'e2e/src/app.e2e-spec.ts',
-    '\'should display welcome message\',',
-    '\'should display welcome message\', async',
-  );
-  await replaceInFile(
-    'e2e/src/app.e2e-spec.ts',
-    'page.navigateTo();',
-    'await page.navigateTo();',
-  );
-  await replaceInFile(
-    'e2e/src/app.e2e-spec.ts',
-    'page.getTitleText()',
+    'await page.getTitleText()',
     '(await page.getTitleText()).trim()',
   );
 

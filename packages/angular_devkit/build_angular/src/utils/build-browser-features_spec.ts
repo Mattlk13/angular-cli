@@ -1,11 +1,10 @@
 /**
  * @license
- * Copyright Google Inc. All Rights Reserved.
+ * Copyright Google LLC All Rights Reserved.
  *
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
-
 
 import { TestProjectHost } from '@angular-devkit/architect/testing';
 import { getSystemPath, join, normalize } from '@angular-devkit/core';
@@ -25,28 +24,22 @@ describe('BuildBrowserFeatures', () => {
   afterEach(async () => host.restore().toPromise());
 
   describe('isDifferentialLoadingNeeded', () => {
-    it('should be true for IE 9-11 and ES2015', () => {
+    it('should be true for IE 9-11 and ES2017', () => {
       host.writeMultipleFiles({
         '.browserslistrc': 'IE 9-11',
       });
 
-      const buildBrowserFeatures = new BuildBrowserFeatures(
-        workspaceRootSysPath,
-        ScriptTarget.ES2015,
-      );
-      expect(buildBrowserFeatures.isDifferentialLoadingNeeded()).toBe(true);
+      const buildBrowserFeatures = new BuildBrowserFeatures(workspaceRootSysPath);
+      expect(buildBrowserFeatures.isDifferentialLoadingNeeded(ScriptTarget.ES2017)).toBe(true);
     });
 
-    it('should be false for Chrome and ES2015', () => {
+    it('should be false for Chrome and ES2017', () => {
       host.writeMultipleFiles({
         '.browserslistrc': 'last 1 chrome version',
       });
 
-      const buildBrowserFeatures = new BuildBrowserFeatures(
-        workspaceRootSysPath,
-        ScriptTarget.ES2015,
-      );
-      expect(buildBrowserFeatures.isDifferentialLoadingNeeded()).toBe(false);
+      const buildBrowserFeatures = new BuildBrowserFeatures(workspaceRootSysPath);
+      expect(buildBrowserFeatures.isDifferentialLoadingNeeded(ScriptTarget.ES2017)).toBe(false);
     });
 
     it('detects no need for differential loading for target is ES5', () => {
@@ -54,23 +47,17 @@ describe('BuildBrowserFeatures', () => {
         '.browserslistrc': 'last 1 chrome version',
       });
 
-      const buildBrowserFeatures = new BuildBrowserFeatures(
-        workspaceRootSysPath,
-        ScriptTarget.ES5,
-      );
-      expect(buildBrowserFeatures.isDifferentialLoadingNeeded()).toBe(false);
+      const buildBrowserFeatures = new BuildBrowserFeatures(workspaceRootSysPath);
+      expect(buildBrowserFeatures.isDifferentialLoadingNeeded(ScriptTarget.ES5)).toBe(false);
     });
 
-    it('should be false for Safari 10.1 when target is ES2015', () => {
+    it('should be false for Safari 10.1 when target is ES2017', () => {
       host.writeMultipleFiles({
         '.browserslistrc': 'Safari 10.1',
       });
 
-      const buildBrowserFeatures = new BuildBrowserFeatures(
-        workspaceRootSysPath,
-        ScriptTarget.ES2015,
-      );
-      expect(buildBrowserFeatures.isDifferentialLoadingNeeded()).toBe(false);
+      const buildBrowserFeatures = new BuildBrowserFeatures(workspaceRootSysPath);
+      expect(buildBrowserFeatures.isDifferentialLoadingNeeded(ScriptTarget.ES2017)).toBe(false);
     });
   });
 
@@ -80,10 +67,7 @@ describe('BuildBrowserFeatures', () => {
         '.browserslistrc': 'Safari 10.1',
       });
 
-      const buildBrowserFeatures = new BuildBrowserFeatures(
-        workspaceRootSysPath,
-        ScriptTarget.ES2015,
-      );
+      const buildBrowserFeatures = new BuildBrowserFeatures(workspaceRootSysPath);
       expect(buildBrowserFeatures.isFeatureSupported('es6-module')).toBe(true);
     });
 
@@ -92,10 +76,7 @@ describe('BuildBrowserFeatures', () => {
         '.browserslistrc': 'IE 9',
       });
 
-      const buildBrowserFeatures = new BuildBrowserFeatures(
-        workspaceRootSysPath,
-        ScriptTarget.ES2015,
-      );
+      const buildBrowserFeatures = new BuildBrowserFeatures(workspaceRootSysPath);
       expect(buildBrowserFeatures.isFeatureSupported('es6-module')).toBe(false);
     });
 
@@ -104,10 +85,7 @@ describe('BuildBrowserFeatures', () => {
         '.browserslistrc': 'last 1 chrome version',
       });
 
-      const buildBrowserFeatures = new BuildBrowserFeatures(
-        workspaceRootSysPath,
-        ScriptTarget.ES2015,
-      );
+      const buildBrowserFeatures = new BuildBrowserFeatures(workspaceRootSysPath);
       expect(buildBrowserFeatures.isFeatureSupported('es6-module')).toBe(true);
     });
 
@@ -116,10 +94,7 @@ describe('BuildBrowserFeatures', () => {
         '.browserslistrc': 'Edge 18',
       });
 
-      const buildBrowserFeatures = new BuildBrowserFeatures(
-        workspaceRootSysPath,
-        ScriptTarget.ES2015,
-      );
+      const buildBrowserFeatures = new BuildBrowserFeatures(workspaceRootSysPath);
       expect(buildBrowserFeatures.isFeatureSupported('es6-module')).toBe(true);
     });
   });

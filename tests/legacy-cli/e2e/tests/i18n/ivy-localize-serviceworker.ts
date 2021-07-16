@@ -1,4 +1,4 @@
-import * as express from 'express';
+import express from 'express';
 import { resolve } from 'path';
 import { getGlobalVariable } from '../../utils/env';
 import {
@@ -8,12 +8,13 @@ import {
   replaceInFile,
   writeFile,
 } from '../../utils/fs';
-import { ng, npm } from '../../utils/process';
+import { installPackage } from '../../utils/packages';
+import { ng } from '../../utils/process';
 import { updateJsonFile } from '../../utils/project';
 import { expectToFail } from '../../utils/utils';
 import { readNgVersion } from '../../utils/version';
 
-export default async function() {
+export default async function () {
   // TEMP: disable pending i18n updates
   // TODO: when re-enabling, use setupI18nConfig and helpers like other i18n tests.
   return;
@@ -22,7 +23,7 @@ export default async function() {
   if (getGlobalVariable('argv')['ng-snapshots']) {
     localizeVersion = require('../../ng-snapshot/package.json').dependencies['@angular/localize'];
   }
-  await npm('install', `${localizeVersion}`);
+  await installPackage(localizeVersion);
 
   let serviceWorkerVersion = '@angular/service-worker@' + readNgVersion();
   if (getGlobalVariable('argv')['ng-snapshots']) {
@@ -30,9 +31,9 @@ export default async function() {
       '@angular/service-worker'
     ];
   }
-  await npm('install', `${serviceWorkerVersion}`);
+  await installPackage(serviceWorkerVersion);
 
-  await updateJsonFile('tsconfig.base.json', config => {
+  await updateJsonFile('tsconfig.json', (config) => {
     config.compilerOptions.target = 'es2015';
     if (!config.angularCompilerOptions) {
       config.angularCompilerOptions = {};
@@ -48,7 +49,7 @@ export default async function() {
     { lang: 'fr', translation: 'Bonjour i18n!' },
   ];
 
-  await updateJsonFile('angular.json', workspaceJson => {
+  await updateJsonFile('angular.json', (workspaceJson) => {
     const appProject = workspaceJson.projects['test-project'];
     const appArchitect = appProject.architect || appProject.targets;
     const serveConfigs = appArchitect['serve'].configurations;
@@ -118,7 +119,7 @@ export default async function() {
   );
 
   // Extract the translation messages and copy them for each language.
-  await ng('xi18n', '--output-path=src/locale');
+  await ng('extract-i18n', '--output-path=src/locale');
   await expectFileToExist('src/locale/messages.xlf');
   await expectFileToMatch('src/locale/messages.xlf', `source-language="en-US"`);
   await expectFileToMatch('src/locale/messages.xlf', `An introduction header for this sample`);

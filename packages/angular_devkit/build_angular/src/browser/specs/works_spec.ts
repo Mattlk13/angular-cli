@@ -1,37 +1,47 @@
 /**
  * @license
- * Copyright Google Inc. All Rights Reserved.
+ * Copyright Google LLC All Rights Reserved.
  *
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
 
-import { Architect } from '@angular-devkit/architect';
-import { normalize } from '@angular-devkit/core';
-import { browserBuild, createArchitect, host } from '../../test-utils';
+import { describeBuilder } from '../../testing';
+import { buildWebpackBrowser } from '../index';
 
+const BROWSER_BUILDER_INFO = {
+  name: '@angular-devkit/build-angular:browser',
+  schemaPath: __dirname + '/../schema.json',
+};
 
-describe('Browser Builder basic test', () => {
-  const target = { project: 'app', target: 'build' };
-  let architect: Architect;
+describeBuilder(buildWebpackBrowser, BROWSER_BUILDER_INFO, (harness) => {
+  describe('basic test', () => {
+    it('works', async () => {
+      // Provide a target and options for builder execution
+      harness.useTarget('build', {
+        outputPath: 'dist',
+        index: 'src/index.html',
+        main: 'src/main.ts',
+        polyfills: 'src/polyfills.ts',
+        tsConfig: 'src/tsconfig.app.json',
+        progress: false,
+        vendorChunk: true,
+        assets: ['src/favicon.ico', 'src/assets'],
+        styles: ['src/styles.css'],
+        scripts: [],
+      });
 
-  beforeEach(async () => {
-    await host.initialize().toPromise();
-    architect = (await createArchitect(host.root())).architect;
-  });
+      // Execute builder with above provided project, target, and options
+      await harness.executeOnce();
 
-  afterEach(async () => host.restore().toPromise());
-
-  it('works', async () => {
-    await browserBuild(architect, host, target);
-
-    // Default files should be in outputPath.
-    expect(await host.scopedSync().exists(normalize('dist/runtime.js'))).toBe(true);
-    expect(await host.scopedSync().exists(normalize('dist/main.js'))).toBe(true);
-    expect(await host.scopedSync().exists(normalize('dist/polyfills.js'))).toBe(true);
-    expect(await host.scopedSync().exists(normalize('dist/styles.js'))).toBe(true);
-    expect(await host.scopedSync().exists(normalize('dist/vendor.js'))).toBe(true);
-    expect(await host.scopedSync().exists(normalize('dist/favicon.ico'))).toBe(true);
-    expect(await host.scopedSync().exists(normalize('dist/index.html'))).toBe(true);
+      // Default files should be in outputPath.
+      expect(harness.hasFile('dist/runtime.js')).toBeTrue();
+      expect(harness.hasFile('dist/main.js')).toBeTrue();
+      expect(harness.hasFile('dist/polyfills.js')).toBeTrue();
+      expect(harness.hasFile('dist/vendor.js')).toBeTrue();
+      expect(harness.hasFile('dist/favicon.ico')).toBeTrue();
+      expect(harness.hasFile('dist/styles.css')).toBeTrue();
+      expect(harness.hasFile('dist/index.html')).toBeTrue();
+    });
   });
 });

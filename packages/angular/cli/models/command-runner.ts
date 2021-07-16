@@ -1,12 +1,12 @@
 /**
  * @license
- * Copyright Google Inc. All Rights Reserved.
+ * Copyright Google LLC All Rights Reserved.
  *
  * Use of this source code is governed by an MIT-style license that can be
  * found in the LICENSE file at https://angular.io/license
  */
+
 import {
-  JsonParseMode,
   analytics,
   isJsonObject,
   json,
@@ -17,6 +17,8 @@ import {
 } from '@angular-devkit/core';
 import { readFileSync } from 'fs';
 import { join, resolve } from 'path';
+import { AngularWorkspace } from '../utilities/config';
+import { readAndParseJson } from '../utilities/json-file';
 import { parseJsonSchemaToCommandDescription } from '../utilities/json-schema';
 import {
   getGlobalAnalytics,
@@ -26,7 +28,7 @@ import {
   promptProjectAnalytics,
 } from './analytics';
 import { Command } from './command';
-import { CommandDescription, CommandWorkspace } from './interface';
+import { CommandDescription } from './interface';
 import * as parser from './parser';
 
 // NOTE: Update commands.json if changing this.  It's still deep imported in one CI validation
@@ -38,6 +40,7 @@ const standardCommands = {
   'config': '../commands/config.json',
   'doc': '../commands/doc.json',
   'e2e': '../commands/e2e.json',
+  'extract-i18n': '../commands/extract-i18n.json',
   'make-this-awesome': '../commands/easter-egg.json',
   'generate': '../commands/generate.json',
   'help': '../commands/help.json',
@@ -48,7 +51,6 @@ const standardCommands = {
   'test': '../commands/test.json',
   'update': '../commands/update.json',
   'version': '../commands/version.json',
-  'xi18n': '../commands/xi18n.json',
 };
 
 export interface CommandMapOptions {
@@ -59,7 +61,10 @@ export interface CommandMapOptions {
  * Create the analytics instance.
  * @private
  */
-async function _createAnalytics(workspace: boolean, skipPrompt = false): Promise<analytics.Analytics> {
+async function _createAnalytics(
+  workspace: boolean,
+  skipPrompt = false,
+): Promise<analytics.Analytics> {
   let config = await getGlobalAnalytics();
   // If in workspace and global analytics is enabled, defer to workspace level
   if (workspace && config) {
@@ -96,8 +101,7 @@ async function loadCommandDescription(
   registry: json.schema.CoreSchemaRegistry,
 ): Promise<CommandDescription> {
   const schemaPath = resolve(__dirname, path);
-  const schemaContent = readFileSync(schemaPath, 'utf-8');
-  const schema = json.parseJson(schemaContent, JsonParseMode.Loose, { path: schemaPath });
+  const schema = readAndParseJson(schemaPath);
   if (!isJsonObject(schema)) {
     throw new Error('Invalid command JSON loaded from ' + JSON.stringify(schemaPath));
   }
@@ -116,9 +120,11 @@ async function loadCommandDescription(
 export async function runCommand(
   args: string[],
   logger: logging.Logger,
-  workspace: CommandWorkspace,
+  workspace: AngularWorkspace | undefined,
   commands: CommandMapOptions = standardCommands,
-  options: { analytics?: analytics.Analytics } = {},
+  options: { analytics?: analytics.Analytics; currentDirectory: string } = {
+    currentDirectory: process.cwd(),
+  },
 ): Promise<number | void> {
   // This registry is exclusively used for flattening schemas, and not for validating.
   const registry = new schema.CoreSchemaRegistry([]);
@@ -188,7 +194,7 @@ export async function runCommand(
       const aliasDesc = await loadCommandDescription(name, commands[name], registry);
       const aliases = aliasDesc.aliases;
 
-      if (aliases && aliases.some(alias => alias === commandName)) {
+      if (aliases && aliases.some((alias) => alias === commandName)) {
         commandName = name;
         description = aliasDesc;
         break;
@@ -232,20 +238,25 @@ export async function runCommand(
     });
 
     const analytics =
-      options.analytics ||
-      (await _createAnalytics(!!workspace.configFile, description.name === 'update'));
-    const context = { workspace, analytics };
+      options.analytics || (await _createAnalytics(!!workspace, description.name === 'update'));
+    const context = {
+      workspace,
+      analytics,
+      currentDirectory: options.currentDirectory,
+      root: workspace?.basePath ?? options.currentDirectory,
+    };
     const command = new description.impl(context, description, logger);
 
     // Flush on an interval (if the event loop is waiting).
     let analyticsFlushPromise = Promise.resolve();
-    setInterval(() => {
+    const analyticsFlushInterval = setInterval(() => {
       analyticsFlushPromise = analyticsFlushPromise.then(() => analytics.flush());
     }, 1000);
 
     const result = await command.validateAndRun(parsedOptions);
 
     // Flush one last time.
+    clearInterval(analyticsFlushInterval);
     await analyticsFlushPromise.then(() => analytics.flush());
 
     return result;

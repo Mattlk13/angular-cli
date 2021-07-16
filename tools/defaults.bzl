@@ -1,6 +1,6 @@
 """Re-export of some bazel rules with repository-wide defaults."""
 
-load("@npm_bazel_typescript//:index.bzl", _ts_library = "ts_library")
+load("@npm//@bazel/typescript:index.bzl", _ts_library = "ts_library")
 
 _DEFAULT_TSCONFIG_TEST = "//:tsconfig-test.json"
 
@@ -27,10 +27,12 @@ def ts_library(
 
     _ts_library(
         name = name,
-        tsconfig = tsconfig,
         testonly = testonly,
         deps = deps,
+        # @external_begin
+        tsconfig = tsconfig,
         devmode_module = devmode_module,
         devmode_target = devmode_target,
+        # @external_end
         **kwargs
     )

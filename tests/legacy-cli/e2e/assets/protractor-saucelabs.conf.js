@@ -19,35 +19,32 @@ exports.config = {
   multiCapabilities: [
     {
       browserName: 'chrome',
-      version: '80',
+      platform: 'Windows 10',
+      version: '89.0',
       tunnelIdentifier,
     },
     {
       browserName: 'firefox',
-      version: '72',
+      version: '86.0',
+      platform: 'Windows 10',
       tunnelIdentifier,
     },
     {
       browserName: 'firefox',
-      version: '68', // Latest Firefox ESR version
+      version: '78.0', // Latest Firefox ESR version
+      platform: 'Windows 10',
       tunnelIdentifier,
     },
     {
       browserName: 'safari',
-      platform: 'macOS 10.13',
-      version: '12.1',
+      platform: 'macOS 11.00',
+      version: '14',
       tunnelIdentifier,
     },
     {
       browserName: 'safari',
       platform: 'macOS 10.15',
-      version: '13.0',
-      tunnelIdentifier,
-    },
-    {
-      browserName: 'internet explorer',
-      platform: 'Windows 8',
-      version: '10',
+      version: '13.1',
       tunnelIdentifier,
     },
     {
@@ -59,13 +56,7 @@ exports.config = {
     {
       browserName: "MicrosoftEdge",
       platform: 'Windows 10',
-      version: "17.17134",
-      tunnelIdentifier,
-    },
-    {
-      browserName: "MicrosoftEdge",
-      platform: 'Windows 10',
-      version: "18.17763",
+      version: "88.0",
       tunnelIdentifier,
     },
   ],
@@ -73,6 +64,7 @@ exports.config = {
   // Only allow one session at a time to prevent over saturation of Saucelabs sessions.
   maxSessions: 1,
 
+  SELENIUM_PROMISE_MANAGER: false,
   baseUrl: 'http://localhost:2000/',
   framework: 'jasmine',
   jasmineNodeOpts: {
